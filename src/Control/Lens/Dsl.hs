@@ -147,12 +147,13 @@ isoClause conf forward ips (Match p (NormalB e) wheres) = do
        $ recBackward r
   processBackward e = recBackward e
 
+{-
 traversalMatch :: LenqConf -> Name -> Match -> Q Match
 traversalMatch _ _ (Match _ (GuardedB _) _) = rFail "Guard statements not yet supported."
 traversalMatch conf f (Match matchPat (NormalB matchExp) wheres) = do
   when (not $ null wheres) $ rFail "Where statements not yet supported."
-
   pat <- everywhereM (return `extM` replaceWild)
+-}
 
 lensMatch :: LenqConf -> Name -> Match -> Q Match
 lensMatch _ _ (Match _ (GuardedB _) _) = rFail "Guard statements not yet supported."
