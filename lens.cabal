@@ -150,13 +150,15 @@ library
     mtl                  >= 2.1.1    && < 2.2,
     text                 >= 0.11     && < 0.12,
     transformers         >= 0.3      && < 0.4,
-    unordered-containers >= 0.2      && < 0.3
+    unordered-containers >= 0.2      && < 0.3,
+    syb
 
   exposed-modules:
     Control.Exception.Lens
     Control.Lens
     Control.Lens.Action
     Control.Lens.Combinators
+    Control.Lens.Dsl
     Control.Lens.Fold
     Control.Lens.Getter
     Control.Lens.Indexed
