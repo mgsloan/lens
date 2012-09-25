@@ -42,9 +42,16 @@ module Control.Lens.Internal
   , Bazaar(..), bazaar, duplicateBazaar, sell
   , Effect(..)
   , EffectRWS(..)
-  -- , EffectS(..)
+  -- * Getter internals
   , Gettable(..), Accessor(..), Effective(..), ineffective, noEffect, Folding(..)
+  -- * Setter internals
   , Settable(..), Mutator(..)
+  -- * Zipper internals
+  , Level(..), levelWidth
+  , leftLevel, left1Level, leftmostLevel
+  , rightLevel, right1Level, rightmostLevel
+  , rezipLevel
+  , focusLevel
   ) where
 
 import Control.Applicative
@@ -55,9 +62,13 @@ import Control.Comonad.Store.Class
 import Control.Lens.Isomorphic
 import Control.Monad
 import Prelude hiding ((.),id)
+import Data.Foldable
 import Data.Functor.Compose
 import Data.Functor.Identity
+import Data.List.NonEmpty as NonEmpty
+import Data.Maybe
 import Data.Monoid
+import Data.Traversable
 
 -----------------------------------------------------------------------------
 -- Functors
@@ -485,4 +496,96 @@ instance Functor Mutator where
 instance Applicative Mutator where
   pure = Mutator
   Mutator f <*> Mutator a = Mutator (f a)
+
+-----------------------------------------------------------------------------
+-- Level
+-----------------------------------------------------------------------------
+
+-- | A basic non-empty list zipper
+--
+-- All combinators assume the invariant that the length stored matches the number
+-- of elements in list of items to the left, and the list of items to the left is
+-- stored reversed.
+data Level a = Level {-# UNPACK #-} !Int [a] a [a]
+
+-- | How many entries are there in this level?
+levelWidth :: Level a -> Int
+levelWidth (Level n _ _ rs) = n + 1 + length rs
+{-# INLINE levelWidth #-}
+
+-- | Pull the non-emtpy list zipper left one entry
+leftLevel :: Level a -> Maybe (Level a)
+leftLevel (Level _ []     _ _ ) = Nothing
+leftLevel (Level n (l:ls) a rs) = Just (Level (n - 1) ls l (a:rs))
+{-# INLINE leftLevel #-}
+
+-- | Pull the non-empty list zipper left one entry, stopping at the first entry.
+left1Level :: Level a -> Level a
+left1Level z = fromMaybe z (leftLevel z)
+{-# INLINE left1Level #-}
+
+-- | Pull the non-empty list zipper all the way to the left.
+leftmostLevel :: Level a -> Level a
+leftmostLevel (Level _ ls m rs) = case Prelude.reverse ls ++ m : rs of
+  (c:cs) -> Level 0 [] c cs
+  _ -> error "the impossible happened"
+{-# INLINE leftmostLevel #-}
+
+-- | Pul the non-empty list zipper all the way to the right.
+-- /NB:/, when given an infinite list this may not terminate.
+rightmostLevel :: Level a -> Level a
+rightmostLevel (Level _ ls m rs) = go 0 [] (Prelude.head xs) (Prelude.tail xs) where
+  xs = Prelude.reverse ls ++ m : rs
+  go n zs y []     = Level n zs y []
+  go n zs y (w:ws) = (go $! n + 1) (y:zs) w ws
+{-# INLINE rightmostLevel #-}
+
+-- | Pull the non-empty list zipper right one entry.
+rightLevel :: Level a -> Maybe (Level a)
+rightLevel (Level _ _  _ []    ) = Nothing
+rightLevel (Level n ls a (r:rs)) = Just (Level (n + 1) (a:ls) r rs)
+{-# INLINE rightLevel #-}
+
+-- | Pull the non-empty list zipper right one entry, stopping at the last entry.
+right1Level :: Level a -> Level a
+right1Level z = fromMaybe z (rightLevel z)
+{-# INLINE right1Level #-}
+
+-- | This is a 'Lens' targeting the value that we would 'extract' from the non-empty list zipper.
+--
+-- @'view' 'focusLevel' ≡ 'extract'@
+--
+-- @'focusLevel' :: 'Simple' 'Lens' ('Level' a) a@
+focusLevel :: Functor f => (a -> f a) -> Level a -> f (Level a)
+focusLevel f (Level n ls a rs) = (\b -> Level n ls b rs) <$> f a
+{-# INLINE focusLevel #-}
+
+instance Functor Level where
+  fmap f (Level n ls a rs) = Level n (f <$> ls) (f a) (f <$> rs)
+
+instance Foldable Level where
+  foldMap f = foldMap f . rezipLevel
+
+instance Traversable Level where
+  traverse f (Level n ls a rs) = Level n <$> forwards (traverse (Backwards . f) ls) <*> f a <*> traverse f rs
+
+-- | Zip a non-empty list zipper back up, and return the result.
+rezipLevel :: Level a -> NonEmpty a
+rezipLevel (Level _ ls a rs) = NonEmpty.fromList (Prelude.reverse ls ++ a : rs)
+{-# INLINE rezipLevel #-}
+
+instance Comonad Level where
+  extract (Level _ _ a _) = a
+  extend f w@(Level n ls m rs) = Level n (gol (n - 1) (m:rs) ls) (f w) (gor (n + 1) (m:ls) rs) where
+    gol k zs (y:ys) = f (Level k ys y zs) : (gol $! k - 1) (y:zs) ys
+    gol _ _ [] = []
+    gor k ys (z:zs) = f (Level k ys z zs) : (gor $! k + 1) (z:ys) zs
+    gor _ _ [] = []
+
+instance ComonadStore Int Level where
+  pos (Level n _ _ _) = n
+  peek n (Level m ls a rs) = case compare n m of
+    LT -> ls Prelude.!! (m - n)
+    EQ -> a
+    GT -> rs Prelude.!! (n - m)
 
