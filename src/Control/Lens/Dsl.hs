@@ -6,16 +6,16 @@ import Control.Lens
 import Control.Monad (when)
 import Data.Generics (Data, extT, extM, mkQ, everything, everywhere, everywhereM, listify, gmapT, gmapM)
 import Data.List as List
-import qualified Data.Map as M
+--import qualified Data.Map as M
 import Data.Maybe (fromJust)
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
-
 
 --TODO: use.
 data LenqPartial = IgnorePartial | TraversePartial | WarnPartial | ErrorPartial
 
 data LenqType = LenqLens | LenqIsomorphism | LenqTraversal | LenqProjection
+  deriving Eq
 
 data LenqConf = LenqConf
   { _lenqType :: LenqType
@@ -58,77 +58,45 @@ lenqExp conf qexpr = do
   checkCase (VarP v) ps e ms | (VarE v == e) = buildExp ps ms
   checkCase _ _ _ _ = rFail "Case statements must just case on the last parameter."
   buildExp ps ms = do
-    let ips = init ps
-    case conf ^. lenqType of
-      LenqIsomorphism -> do
-        fr <- newName "fr"
-        to <- newName "to"
-        vs <- mapM (const $ newName "v") ips
-        lamE (map varP vs)
-          . letE [ funD fr $ map (isoClause conf True  ips) ms
-                 , funD to $ map (isoClause conf False ips) ms ]
-          $ appsE
-          [ varE 'iso
-          , appsE . map varE $ fr : vs
-          , appsE . map varE $ to : vs
-          ]
-      _ -> do
-        v <- newName "_v"
-        f <- newName "_f"
-        ms' <- mapM (lensMatch conf f) ms
-        return . LamE (ips ++ [VarP f, VarP v]) $ CaseE (VarE v) ms'
+    func <- newName "func"
+    decs <- lenqDecs conf . fmap (:[]) . funD func $ map (return . toClause) ms
+    return . LamE (init ps) $ LetE decs (VarE func)
 
 lenqDecs :: LenqConf -> DecsQ -> DecsQ
-
 lenqDecs conf decs = mapM doLens =<< decs
  where
-  --
   doLens (FunD n cs)
-  {-
     | conf ^. lenqType == LenqIsomorphism = do
-        fr <- newName "fr"
-        to <- newName "to"
-        let (Clause patsExample _ _:_) = cs
-        vs <- map (const $ newName "v") patsExample
-        funD n'
-          ( appsE [ varE 'iso
-                  , appsE . map varE $ fr : vs
-                  , appsE . map varE $ to : vs
-                  ]
-          )
-          $ map isoClause cs
-     where
-      isoClause (Clause ps b ds) =
-        let ips = init ps
-            lp = last ps
-        Match lp (NormalB ) ds
-        cls <- isoClause conf
-        clause
-        [ funD fr $ map (isoClause conf True  ips) ms
-                 , funD to $ map (isoClause conf False ips) ms ]
-          $
-      {-
-      vs <- mapM (const $ newName "v") $ patsExample
-      let expr = lenqExp conf . lamE (map varP vs)
-               . caseE (varE $ last vs)
-               $ map  cs
-      valD (varP n') (normalB expr) []
-      -}
-    -}
+      to <- newName "to"
+      fr <- newName "fr"
+      let (Clause patsEx _ _:_) = cs
+      vs <- mapM (const $ newName "v") (tail patsEx)
+      let body = normalB $ appsE
+               [ varE 'iso
+               , appsE . map varE $ to : vs
+               , appsE . map varE $ fr : vs
+               ]
+      funD n
+        [clause (map varP vs) body
+          [ funD to $ map (isoClause conf True ) cs
+          , funD fr $ map (isoClause conf False) cs
+          ]
+        ]
     | otherwise = do
-      let n' = mkName $ nameBase n
       f <- newName "f"
-      funD n' . map (\c -> toClause <$> lensMatch conf f (fromJust $ toMatch c))
-              $ processNames (M.singleton n n') cs
+      funD n $ map (\c -> toClause <$> lensMatch conf f (fromJust $ toMatch c)) cs
+--             $ processNames (M.singleton n n') cs
   doLens _ = rFail "Can only use lenq on function declarations."
 
 -- TODO: extract out match checking to elsewhere (duplicated in lensMatch)
-isoClause :: LenqConf -> Bool -> [Pat] -> Match -> Q Clause
-isoClause _ _ _ (Match _ (GuardedB _) _) = rFail "Guard statements not yet supported."
-isoClause conf forward ips (Match p (NormalB e) wheres) = do
+isoClause :: LenqConf -> Bool -> Clause -> Q Clause
+isoClause _ _ (Clause _ (GuardedB _) _) = rFail "Guard statements not yet supported."
+isoClause conf forward (Clause ps (NormalB inExpr) wheres) = do
   when (not $ null wheres) $ rFail "Where statements not yet supported."
-  (p', e') <- if forward then return (p, processForward e) else
-    (,) <$> expToPat processBackward e <*> patToExpFail p p
+  let ips = init ps
+      p = last ps
+  (p', e') <- if forward then return (p, processForward inExpr) else
+    (,) <$> expToPat processBackward inExpr <*> patToExpFail p p
   return $ Clause (ips ++ [p']) (NormalB e') []
  where
   processForward :: Exp -> Exp
@@ -271,6 +239,7 @@ lensMatch conf f (Match matchPat (NormalB matchExp) wheres) = do
   replaceWild p     = return p
 
 -- Takes unique names and makes them plain.
+{-
 processNames :: Data a => M.Map Name Name -> a -> a
 processNames mp = everywhere (id `extT` process)
  where
@@ -280,6 +249,7 @@ processNames mp = everywhere (id `extT` process)
             | otherwise -> n
   isU (Name _ (NameU _)) = True
   isU _ = False
+-}
 
 patToExpFail :: Applicative f => Pat -> Pat -> f Exp
 patToExpFail userp p = patToExp (\pp -> rFail $ "Pattern " ++ pprint pp ++ ", from within " ++ pprint userp ++ " has no expression equivalent.") p
@@ -325,6 +295,7 @@ collectAppE :: Exp -> [Exp] -> [Exp]
 collectAppE (AppE l r) xs = collectAppE l (r:xs)
 collectAppE x xs = x:xs
 
+apps :: [Exp] -> Exp
 apps = foldl1 AppE
 
 -- clauseToMatch :: Projection Clause Match
