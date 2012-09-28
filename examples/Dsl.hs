@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, NoMonomorphismRestriction, ViewPatterns, TypeOperators, RankNTypes, TypeFamilies #-}
+{-# LANGUAGE TemplateHaskell, NoMonomorphismRestriction, ViewPatterns, TypeOperators #-}
 import Control.Lens
 import Control.Lens.Dsl
 
