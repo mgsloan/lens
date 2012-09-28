@@ -23,18 +23,22 @@ module Language.Haskell.TH.Lens
   , substTypeVars -- :: HasTypeVars t => Map Name Name -> t -> t
   , conFields
   , conNamedFields
+  , childPats
+  , traverseAppE, traverseAppT, traverseArrowT, forallLens
   ) where
 
 import Control.Applicative
+import Control.Lens.Fold
 import Control.Lens.Getter
 import Control.Lens.Setter
+import Control.Lens.Tuple
 import Control.Lens.Type
 import Control.Lens.Traversal
 import Control.Lens.IndexedLens
-import Data.Map as Map hiding (toList,map)
+import Data.Map as Map hiding (toList,map,null)
 import Data.Maybe (fromMaybe)
 import Data.Monoid
-import Data.Set as Set hiding (toList,map)
+import Data.Set as Set hiding (toList,map,null)
 import Data.Set.Lens
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
@@ -52,10 +56,11 @@ instance HasName Name where
   name = id
 
 instance HasName Con where
-  name f (NormalC n tys)       = (`NormalC` tys) <$> f n
-  name f (RecC n tys)          = (`RecC` tys) <$> f n
+  name f (NormalC n tys)       = (`NormalC` tys)        <$> f n
+  name f (RecC n tys)          = (`RecC` tys)           <$> f n
   name f (InfixC l n r)        = (\n' -> InfixC l n' r) <$> f n
   name f (ForallC bds ctx con) = ForallC bds ctx <$> name f con
+
 
 -- | Provides for the extraction of free type variables, and alpha renaming.
 class HasTypeVars t where
@@ -128,3 +133,42 @@ conFields f (ForallC bds ctx c) = ForallC bds ctx <$> conFields f c
 conNamedFields :: Simple Traversal Con VarStrictType
 conNamedFields f (RecC n fs) = RecC n <$> traverse f fs
 conNamedFields _ c = pure c
+
+childPats :: Simple Traversal Pat Pat
+childPats f (TupP        ps) = TupP          <$> traverse f ps
+childPats f (UnboxedTupP ps) = UnboxedTupP   <$> traverse f ps
+childPats f (ConP      n ps) = ConP n        <$> traverse f ps
+childPats f (RecP      n fs) = RecP n        <$> traverse (_2 f) fs
+childPats f (ListP       ps) = ListP         <$> traverse f ps
+childPats f (InfixP   l o r) = (`InfixP` o)  <$> f l <*> f r
+childPats f (UInfixP  l o r) = (`UInfixP` o) <$> f l <*> f r
+childPats f (ParensP      p) = ParensP       <$> f p
+childPats f (TildeP       p) = TildeP        <$> f p
+childPats f (BangP        p) = BangP         <$> f p
+childPats f (AsP        n p) = AsP n         <$> f p
+childPats f (SigP       p t) = (`SigP` t)    <$> f p
+childPats f (ViewP      e p) = ViewP e       <$> f p
+-- Handles LitP, VarP, WildP
+childPats _ p = pure p
+
+leafPats :: Simple Traversal Pat Pat
+leafPats f p
+  | null (p ^.. childPats) = f p
+  | otherwise = childPats (leafPats f) p
+
+traverseAppE :: Simple Traversal Exp Exp
+traverseAppE f (AppE l r) = AppE <$> traverseAppE f l <*> f r
+traverseAppE f t = f t
+
+traverseAppT :: Simple Traversal Type Type
+traverseAppT f (AppT l r) = AppT <$> traverseAppT f l <*> f r
+traverseAppT f t = f t
+
+traverseArrowT :: Simple Traversal Type Type
+traverseArrowT f (AppT (AppT ArrowT l) r)
+  = (\l' r' -> AppT (AppT ArrowT l') r') <$> f l <*> traverseArrowT f r
+traverseArrowT f t = f t
+
+forallLens :: Simple Lens Type Type
+forallLens f (ForallT tvs ctx t) = ForallT tvs ctx <$> f t
+forallLens f t = f t
