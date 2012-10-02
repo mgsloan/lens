@@ -1,6 +1,12 @@
+3.0.1
+-----
+* Added `Control.Lens.Type.simple`.
+
 3.0
 ---
 * Added `Control.Lens.Zipper`.
+* Added `<<~`, a version of `<~` that supports chaining assignment.
+* Added `:->`, `:=>`, and `:<->` as type operator aliases for `Simple Lens`, `Simple Traversal`, and `Simple Iso`  respectively.
 
 2.9
 ---

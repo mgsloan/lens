@@ -5,6 +5,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeOperators #-}
 
 #ifndef MIN_VERSION_mtl
 #define MIN_VERSION_mtl(x,y,z) 1
@@ -30,8 +31,7 @@
 --
 -- @type 'Lens' a b c d = forall f. 'Functor' f => (c -> f d) -> a -> f b@
 --
--- Every 'Lens' is a valid 'Control.Lens.Setter.Setter', choosing @f@ =
--- 'Control.Lens.Getter.Mutator'.
+-- Every 'Lens' is a valid 'Control.Lens.Setter.Setter'.
 --
 -- Every 'Lens' can be used for 'Control.Lens.Getter.Getting' like a
 -- 'Control.Lens.Fold.Fold' that doesn't use the 'Applicative' or
@@ -56,7 +56,10 @@ module Control.Lens.Type
   -- * Lenses
     Lens
   , Simple
+  , (:->)
+
   , lens
+  , simple
   , (%%~)
   , (%%=)
 
@@ -78,6 +81,7 @@ module Control.Lens.Type
   , (<^=), (<^^=), (<**=)
   , (<||=), (<&&=)
   , (<<%=), (<<.=)
+  , (<<~)
 
   -- * Cloning Lenses
   , cloneLens
@@ -99,11 +103,15 @@ import Control.Monad.State.Class        as State
 -- $setup
 -- >>> import Control.Lens
 
+-- types
+infixr 0 :->
+
+-- terms
 infixr 4 %%~
 infix  4 %%=
 infixr 4 <+~, <*~, <-~, <//~, <^~, <^^~, <**~, <&&~, <||~, <%~, <<%~, <<.~
 infix  4 <+=, <*=, <-=, <//=, <^=, <^^=, <**=, <&&=, <||=, <%=, <<%=, <<.=
-
+infixr 2 <<~
 
 -------------------------------------------------------------------------------
 -- Lenses
@@ -162,6 +170,9 @@ type Lens a b c d = forall f. Functor f => (c -> f d) -> a -> f b
 -- 'Control.Lens.Setter.Setter', you may have to turn on @LiberalTypeSynonyms@.
 type Simple f a b = f a a b b
 
+-- | This is a commonly used infix alias for a @'Simple' 'Lens'@.
+type a :-> b = forall f. Functor f => (b -> f b) -> a -> f a
+
 -- | @type 'SimpleLens' = 'Simple' 'Lens'@
 type SimpleLens a b = Lens a a b b
 
@@ -178,6 +189,12 @@ type SimpleLensLike f a b = LensLike f a a b b
 lens :: (a -> c) -> (a -> d -> b) -> Lens a b c d
 lens ac adb cfd a = adb a <$> cfd (ac a)
 {-# INLINE lens #-}
+
+-- | This is occasionally useful when your 'Lens' (or 'Control.Lens.Traversal.Traversal')
+-- has a constraint on an unused argument to force that argument to agree with the
+-- type of a used argument and avoid @ScopedTypeVariables@ or other ugliness.
+simple :: SimpleLensLike f a b -> SimpleLensLike f a b
+simple l = l
 
 -------------------------------------------------------------------------------
 -- LensLike
@@ -264,7 +281,7 @@ l %%= f = do
 
 -- | This lens can be used to change the result of a function but only where
 -- the arguments match the key given.
-resultAt :: Eq e => e -> Simple Lens (e -> a) a
+resultAt :: Eq e => e -> (e -> a) :-> a
 resultAt e afa ea = go <$> afa a where
   a = ea e
   go a' e' | e == e'   = a'
@@ -525,7 +542,7 @@ l <%= f = l %%= \c -> let d = f c in (d,d)
 -- | Add to the target of a numerically valued 'Lens' into your monad's state
 -- and return the result.
 --
--- When you do not need the result of the multiplication, ('Control.Lens.Setter.+=') is more
+-- When you do not need the result of the addition, ('Control.Lens.Setter.+=') is more
 -- flexible.
 --
 -- @
@@ -539,7 +556,7 @@ l <+= b = l <%= (+ b)
 -- | Subtract from the target of a numerically valued 'Lens' into your monad's
 -- state and return the result.
 --
--- When you do not need the result of the multiplication, ('Control.Lens.Setter.-=') is more
+-- When you do not need the result of the subtraction, ('Control.Lens.Setter.-=') is more
 -- flexible.
 --
 -- @
@@ -675,6 +692,22 @@ l <<%= f = l %%= \c -> (c, f c)
 (<<.=) :: MonadState a m => LensLike ((,)c) a a c d -> d -> m c
 l <<.= d = l %%= \c -> (c,d)
 {-# INLINE (<<.=) #-}
+
+-- | Run a monadic action, and set the target of 'Lens' to its result.
+--
+-- @
+-- ('<<~') :: 'MonadState' a m => 'Control.Lens.Iso.Iso' a a c d   -> m d -> m d
+-- ('<<~') :: 'MonadState' a m => 'Control.Lens.Type.Lens' a a c d  -> m d -> m d
+-- @
+--
+-- NB: This is limited to taking an actual 'Lens' than admitting a 'Control.Lens.Traversal.Traversal' because
+-- there are potential loss of state issues otherwise.
+(<<~) :: MonadState a m => LensLike (Context c d) a a c d -> m d -> m d
+l <<~ md = do
+  d <- md
+  modify $ \a -> case l (Context id) a of Context f _ -> f d
+  return d
+{-# INLINE (<<~) #-}
 
 -- | Useful for storing lenses in containers.
 newtype ReifiedLens a b c d = ReifyLens { reflectLens :: Lens a b c d }
