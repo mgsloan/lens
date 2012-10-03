@@ -42,9 +42,9 @@ data LenqVariety = LensVariety | IsoVariety | TraversalVariety | ProjectionVarie
 
 lenqExp :: LenqVariety -> Exp -> ExpQ
 lenqExp v (ParensE e) = lenqExp v e
-lenqExp v (LamE ps e) = case e of
-  (CaseE e' ms) -> checkCase (last ps) ps e' ms
-  (LamE ps' e') -> buildExp ps' [Match (last ps') (NormalB e') []]
+lenqExp v e = case e of
+  (LamE ps (CaseE e' ms)) -> checkCase (last ps) ps e' ms
+  (LamE ps (LamE ps' e')) -> buildExp ps' [Match (last ps') (NormalB e') []]
   _ -> lenqError "Expected a lambda expression and an optional case statement."
  where
   checkCase (VarP v) ps e ms | (VarE v == e) = buildExp ps ms
@@ -86,9 +86,12 @@ lenqDecs ds = fmap concat $ mapM doLens ds
                 | op == ''LenqLens      -> (LensVariety,      f $ appsT [ConT ''Lens,      a, b, c, d])
                 | op == ''LenqTraversal -> (TraversalVariety, f $ appsT [ConT ''Traversal, a, b, c, d])
                 | op == ''LenqIso       -> (IsoVariety,       f $ appsT [ConT ''Iso,       a, b, c, d])
-              _ -> lenqError $ "expected a Lens, Traversal, or Iso in type signature of " ++ pprint n ++ "."
+              _ -> lenqError $ unlines
+                 [ "Expected a Lens, Traversal, or Iso in type signature of " ++ pprint n ++ "."
+                 , "In particular, this portion: " ++ pprint tl
+                 ]
   doLens (SigD _ _) = return []
-  doLens _ = lenqError "Lenq can only handle signature and function declarations."
+  doLens _ = lenqError "Function declarations and signatures only."
 
 lenqFunc :: LenqVariety -> Name -> [Clause] -> DecQ
 lenqFunc variety n cs = case variety of
@@ -153,15 +156,14 @@ isoClause forward = overM checkedClause $ \(ps, p, expr) -> do
 
 lensClause :: Name -> Clause -> Q Clause
 lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
-  let vs = allVarP pat
-
-  (outTup, inExp) <- doExpr vs expr
+  (outTup, inExp) <- doExpr (allVarP pat) expr
 
   let dups = filter null . map tail . groupBy (==) . sort $ namesIn outTup
 
-  when (null dups) . lenqError
-    $ "Cannot use a lens variable multiple times in an expression.  The following are duplicates:"
-    ++ show dups
+  when (null dups) . lenqError $ unlines
+    [ "Variables bound in the lens pattern cannot be used multiple times in the result."
+    , "The following are duplicates: " ++ show dups
+    ]
 
   inTup <- patToExp (const $ imposs "In converting pattern for outer tuple representation.") outTup
 
@@ -183,7 +185,7 @@ lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
 
   constLens e = lamLens wildP (return e) wildP wildP (return e)
 
-  comp l = infixE (Just $ return l) (varE '(.)) . Just
+  composed l = infixE (Just $ return l) (varE '(.)) . Just
 
   -- This isn't gonna cut it - gotta inline alongside??
   doCompound :: (Pat -> [Exp] -> ExpQ) -> [Name] -> [Exp] -> Q (Pat, Exp)
@@ -193,7 +195,7 @@ lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
     let pat  = foldl1 (\x y -> TupP                  [x, y]) $ map fst args
         pat' = foldl1 (\x y -> TupP                  [x, y]) $ map VarP pns
         expr = foldl1 (\x y -> apps [VarE 'alongside, x, y]) $ map snd args
-    out <- comp expr (fe pat' $ map VarE pns)
+    out <- composed expr (fe pat' $ map VarE pns)
     return (pat, out)
 
   doExpr :: [Name] -> Exp -> Q (Pat, Exp)
@@ -207,19 +209,24 @@ lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
         p <- varP vn
         e <- varE 'id
         return (p, e)
-    | otherwise = lenqError $ "Non-lens variable " ++ pprint vn ++ " cannot be used in that way."
+    | otherwise = lenqError $ "Expected a variable bound in the lens pattern. " ++ pprint vn ++ " comes from elsewhere."
 
   doExpr vs e@(AppE _ _) = case toListOf traverseAppE e of
     (ConE n:xs) -> doCompound (\p es -> bijLens p . apps $ ConE n : es) vs xs 
-    (InfixE l o r:xs) -> do
-      ifx <- doInfix l o r
-      doExpr vs . apps $ ifx ++xs 
-    xs | not . any (`elem` vs) $ namesIn (init xs) -> do
-          (pat, expr) <- doExpr vs (last xs)
-          expr' <- comp expr (return . apps $ init xs)
-          return (pat, expr')
-       | otherwise
-         -> lenqError $ "All but the last parameter of " ++ pprint (head xs) ++ " cannot contain lens variables."
+    (InfixE l o r:xs) -> doExpr vs . apps $ doInfix l o r ++ xs
+    [VarE n, l, r] | n == '(^.) -> doExpr vs $ apps [r, l]
+                   | n == 'view -> doExpr vs $ apps [l, r]
+    xs -> case filter (any (`elem` vs) . namesIn) $ init xs of
+      [] -> do
+        (pat, expr) <- doExpr vs (last xs)
+        expr' <- composed expr (return . apps $ init xs)
+        return (pat, expr')
+      ps -> lenqError $ unlines
+        [ "The following arguments of " ++ pprint (head xs) ++ " reference variables bound in the lens pattern:"
+        , unwords . ("[":) . (++["]"]) . intersperse "," $ map pprint ps
+        , "Only use lens pattern variables in the last argument."
+        ]
+  doExpr vs (InfixE l o r) = doExpr vs . apps $ doInfix l o r
 
   doExpr vs (TupE        es) = doCompound (\p -> bijLens p . TupE)        vs es
   doExpr vs (UnboxedTupE es) = doCompound (\p -> bijLens p . UnboxedTupE) vs es
@@ -227,18 +234,17 @@ lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
 
   doExpr vs (SigE e t) = do
     (p, e') <- doExpr vs e
-    res <- comp e'
+    res <- composed e'
          $ sigE (varE 'id) [t| Simple Traversal $(varT =<< newName "a") $(return t) |]
     return (p, res)
 
   doExpr vs (ParensE e) = doExpr vs e
-  doExpr vs (InfixE (Just l) o (Just r)) = doCompound (\_ [e] -> return $ AppE (AppE o l) e) vs [r]
 
   doExpr _ e = lenqError $ "Expression " ++ pprint e ++ " has no pattern equivalent."
 
-  doInfix Nothing o Nothing = return [o]
-  doInfix (Just l) o Nothing = return [o, l]
-  doInfix (Just l) o (Just r) = return [o, l, r]
+  doInfix Nothing o Nothing = [o]
+  doInfix (Just l) o Nothing = [o, l]
+  doInfix (Just l) o (Just r) = [o, l, r]
   doInfix _ _ _ = lenqError "Right sections aren't supported."
 
   allVarP = everything (++) $ [] `mkQ` \x ->

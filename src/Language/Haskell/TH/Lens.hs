@@ -151,11 +151,6 @@ childPats f (ViewP      e p) = ViewP e       <$> f p
 -- Handles LitP, VarP, WildP
 childPats _ p = pure p
 
-leafPats :: Simple Traversal Pat Pat
-leafPats f p
-  | null (p ^.. childPats) = f p
-  | otherwise = childPats (leafPats f) p
-
 traverseAppE :: Simple Traversal Exp Exp
 traverseAppE f (AppE l r) = AppE <$> traverseAppE f l <*> f r
 traverseAppE f t = f t
