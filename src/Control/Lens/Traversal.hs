@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE LiberalTypeSynonyms #-}
 {-# LANGUAGE TypeOperators #-}
@@ -10,15 +11,15 @@
 -- Stability   :  provisional
 -- Portability :  Rank2Types
 --
--- A @'Traversal' a b c d@ is a generalization of 'traverse' from
+-- A @'Traversal' s t a b@ is a generalization of 'traverse' from
 -- 'Traversable'. It allows you to traverse over a structure and change out
 -- its contents with monadic or applicative side-effects. Starting from
 --
--- @'traverse' :: ('Traversable' t, 'Applicative' f) => (c -> f d) -> t c -> f (t d)@,
+-- @'traverse' :: ('Traversable' t, 'Applicative' f) => (a -> f b) -> t a -> f (t b)@,
 --
 -- we monomorphize the contents and result to obtain
 --
---  > type Traversal a b c d = forall f. Applicative f => (c -> f d) -> a -> f b
+--  > type Traversal s t a b = forall f. Applicative f => (a -> f b) -> s -> f t
 --
 -- While a 'Traversal' isn't quite a 'Fold', it _can_ be used for 'Getting'
 -- like a 'Fold', because given a 'Monoid' @m@, we have an 'Applicative'
@@ -30,11 +31,6 @@ module Control.Lens.Traversal
   (
   -- * Lenses
     Traversal
-  , (:=>)
-
-  -- ** Lensing Traversals
-  , element
-  , elementOf
 
   -- * Traversing and Lensing
   , traverseOf, forOf, sequenceAOf
@@ -49,6 +45,8 @@ module Control.Lens.Traversal
   , traverseLeft
   , traverseRight
   , both
+  , taking
+  , dropping
 
   -- * Cloning Traversals
   , cloneTraversal
@@ -70,8 +68,6 @@ import Data.Traversable
 
 -- $setup
 -- >>> import Control.Lens
-
-infixr 0 :=>
 
 ------------------------------------------------------------------------------
 -- Traversals
@@ -102,13 +98,10 @@ infixr 0 :=>
 -- is that the caveat expressed in section 5.5 of the \"Essence of the Iterator Pattern\" about exotic
 -- 'Traversable' instances that 'traverse' the same entry multiple times was actually already ruled out by the
 -- second law in that same paper!
-type Traversal a b c d = forall f. Applicative f => (c -> f d) -> a -> f b
+type Traversal s t a b = forall f. Applicative f => (a -> f b) -> s -> f t
 
 -- | @type SimpleTraversal = 'Simple' 'Traversal'@
-type SimpleTraversal a b = Traversal a a b b
-
--- | This is a commonly-used infix alias for a @'Simple' 'Traversal'@.
-type a :=> b = forall f. Applicative f => (b -> f b) -> a -> f a
+type SimpleTraversal s a = Traversal s s a a
 
 --------------------------
 -- Traversal Combinators
@@ -127,11 +120,11 @@ type a :=> b = forall f. Applicative f => (b -> f b) -> a -> f a
 -- @'traverse' ≡ 'traverseOf' 'traverse'@
 --
 -- @
--- 'traverseOf' :: 'Control.Lens.Iso.Iso' a b c d       -> (c -> f d) -> a -> f b
--- 'traverseOf' :: 'Lens' a b c d      -> (c -> f d) -> a -> f b
--- 'traverseOf' :: 'Traversal' a b c d -> (c -> f d) -> a -> f b
+-- 'traverseOf' :: 'Control.Lens.Iso.Iso' s t a b       -> (a -> f b) -> s -> f t
+-- 'traverseOf' :: 'Lens' s t a b      -> (a -> f b) -> s -> f t
+-- 'traverseOf' :: 'Traversal' s t a b -> (a -> f b) -> s -> f t
 -- @
-traverseOf :: LensLike f a b c d -> (c -> f d) -> a -> f b
+traverseOf :: LensLike f s t a b -> (a -> f b) -> s -> f t
 traverseOf = id
 {-# INLINE traverseOf #-}
 
@@ -150,11 +143,11 @@ traverseOf = id
 -- @
 --
 -- @
--- 'forOf' :: 'Control.Lens.Iso.Iso' a b c d -> a -> (c -> f d) -> f b
--- 'forOf' :: 'Lens' a b c d -> a -> (c -> f d) -> f b
--- 'forOf' :: 'Traversal' a b c d -> a -> (c -> f d) -> f b
+-- 'forOf' :: 'Control.Lens.Iso.Iso' s t a b -> s -> (a -> f b) -> f t
+-- 'forOf' :: 'Lens' s t a b -> s -> (a -> f b) -> f t
+-- 'forOf' :: 'Traversal' s t a b -> s -> (a -> f b) -> f t
 -- @
-forOf :: LensLike f a b c d -> a -> (c -> f d) -> f b
+forOf :: LensLike f s t a b -> s -> (a -> f b) -> f t
 forOf = flip
 {-# INLINE forOf #-}
 
@@ -168,11 +161,11 @@ forOf = flip
 -- @
 --
 -- @
--- 'sequenceAOf' ::                  'Control.Lens.Iso.Iso' a b (f c) c       -> a -> f b
--- 'sequenceAOf' ::                  'Lens' a b (f c) c      -> a -> f b
--- 'sequenceAOf' :: 'Applicative' f => 'Traversal' a b (f c) c -> a -> f b
+-- 'sequenceAOf' ::                  'Control.Lens.Iso.Iso' s t (f b) b       -> s -> f t
+-- 'sequenceAOf' ::                  'Lens' s t (f b) b      -> s -> f t
+-- 'sequenceAOf' :: 'Applicative' f => 'Traversal' s t (f b) b -> s -> f t
 -- @
-sequenceAOf :: LensLike f a b (f c) c -> a -> f b
+sequenceAOf :: LensLike f s t (f b) b -> s -> f t
 sequenceAOf l = l id
 {-# INLINE sequenceAOf #-}
 
@@ -182,12 +175,12 @@ sequenceAOf l = l id
 -- @'mapM' ≡ 'mapMOf' 'traverse'@
 --
 -- @
--- 'mapMOf' ::            'Control.Lens.Iso.Iso' a b c d       -> (c -> m d) -> a -> m b
--- 'mapMOf' ::            'Lens' a b c d      -> (c -> m d) -> a -> m b
--- 'mapMOf' :: 'Monad' m => 'Traversal' a b c d -> (c -> m d) -> a -> m b
+-- 'mapMOf' ::            'Control.Lens.Iso.Iso' s t a b       -> (a -> m b) -> s -> m t
+-- 'mapMOf' ::            'Lens' s t a b      -> (a -> m b) -> s -> m t
+-- 'mapMOf' :: 'Monad' m => 'Traversal' s t a b -> (a -> m b) -> s -> m t
 -- @
-mapMOf :: LensLike (WrappedMonad m) a b c d -> (c -> m d) -> a -> m b
-mapMOf l cmd = unwrapMonad . l (WrapMonad . cmd)
+mapMOf :: LensLike (WrappedMonad m) s t a b -> (a -> m b) -> s -> m t
+mapMOf l cmd = unwrapMonad# (l (wrapMonad# cmd))
 {-# INLINE mapMOf #-}
 
 -- | 'forMOf' is a flipped version of 'mapMOf', consistent with the definition of 'forM'.
@@ -197,12 +190,12 @@ mapMOf l cmd = unwrapMonad . l (WrapMonad . cmd)
 -- @
 --
 -- @
--- 'forMOf' ::            'Control.Lens.Iso.Iso' a b c d       -> a -> (c -> m d) -> m b
--- 'forMOf' ::            'Lens' a b c d      -> a -> (c -> m d) -> m b
--- 'forMOf' :: 'Monad' m => 'Traversal' a b c d -> a -> (c -> m d) -> m b
+-- 'forMOf' ::            'Control.Lens.Iso.Iso' s t a b       -> s -> (a -> m b) -> m t
+-- 'forMOf' ::            'Lens' s t a b      -> s -> (a -> m b) -> m t
+-- 'forMOf' :: 'Monad' m => 'Traversal' s t a b -> s -> (a -> m b) -> m t
 -- @
-forMOf :: LensLike (WrappedMonad m) a b c d -> a -> (c -> m d) -> m b
-forMOf l a cmd = unwrapMonad (l (WrapMonad . cmd) a)
+forMOf :: LensLike (WrappedMonad m) s t a b -> s -> (a -> m b) -> m t
+forMOf l a cmd = unwrapMonad (l (wrapMonad# cmd) a)
 {-# INLINE forMOf #-}
 
 -- | Sequence the (monadic) effects targeted by a lens in a container from left to right.
@@ -214,12 +207,12 @@ forMOf l a cmd = unwrapMonad (l (WrapMonad . cmd) a)
 -- @
 --
 -- @
--- 'sequenceOf' ::            'Control.Lens.Iso.Iso' a b (m c) c       -> a -> m b
--- 'sequenceOf' ::            'Lens' a b (m c) c      -> a -> m b
--- 'sequenceOf' :: 'Monad' m => 'Traversal' a b (m c) c -> a -> m b
+-- 'sequenceOf' ::            'Control.Lens.Iso.Iso' s t (m b) b       -> s -> m t
+-- 'sequenceOf' ::            'Lens' s t (m b) b      -> s -> m t
+-- 'sequenceOf' :: 'Monad' m => 'Traversal' s t (m b) b -> s -> m t
 -- @
-sequenceOf :: LensLike (WrappedMonad m) a b (m c) c -> a -> m b
-sequenceOf l = unwrapMonad . l WrapMonad
+sequenceOf :: LensLike (WrappedMonad m) s t (m b) b -> s -> m t
+sequenceOf l = unwrapMonad# (l WrapMonad)
 {-# INLINE sequenceOf #-}
 
 -- | This generalizes 'Data.List.transpose' to an arbitrary 'Traversal'.
@@ -235,8 +228,8 @@ sequenceOf l = unwrapMonad . l WrapMonad
 -- monadic strength as well:
 --
 -- @'transposeOf' '_2' :: (b, [a]) -> [(b, a)]@
-transposeOf :: LensLike ZipList a b [c] c -> a -> [b]
-transposeOf l = getZipList . l ZipList
+transposeOf :: LensLike ZipList s t [a] a -> s -> [t]
+transposeOf l = getZipList# (l ZipList)
 {-# INLINE transposeOf #-}
 
 -- | This generalizes 'Data.Traversable.mapAccumR' to an arbitrary 'Traversal'.
@@ -246,11 +239,11 @@ transposeOf l = getZipList . l ZipList
 -- 'mapAccumROf' accumulates state from right to left.
 --
 -- @
--- 'mapAccumROf' :: 'Control.Lens.Iso.Iso' a b c d       -> (s -> c -> (s, d)) -> s -> a -> (s, b)
--- 'mapAccumROf' :: 'Lens' a b c d      -> (s -> c -> (s, d)) -> s -> a -> (s, b)
--- 'mapAccumROf' :: 'Traversal' a b c d -> (s -> c -> (s, d)) -> s -> a -> (s, b)
+-- 'mapAccumROf' :: 'Control.Lens.Iso.Iso' s t a b       -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
+-- 'mapAccumROf' :: 'Lens' s t a b      -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
+-- 'mapAccumROf' :: 'Traversal' s t a b -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
 -- @
-mapAccumROf :: LensLike (Lazy.State s) a b c d -> (s -> c -> (s, d)) -> s -> a -> (s, b)
+mapAccumROf :: LensLike (Lazy.State acc) s t a b -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
 mapAccumROf l f s0 a = swap (Lazy.runState (l (\c -> State.state (\s -> swap (f s c))) a) s0)
 {-# INLINE mapAccumROf #-}
 
@@ -261,11 +254,11 @@ mapAccumROf l f s0 a = swap (Lazy.runState (l (\c -> State.state (\s -> swap (f 
 -- 'mapAccumLOf' accumulates state from left to right.
 --
 -- @
--- 'mapAccumLOf' :: 'Control.Lens.Iso.Iso' a b c d       -> (s -> c -> (s, d)) -> s -> a -> (s, b)
--- 'mapAccumLOf' :: 'Lens' a b c d      -> (s -> c -> (s, d)) -> s -> a -> (s, b)
--- 'mapAccumLOf' :: 'Traversal' a b c d -> (s -> c -> (s, d)) -> s -> a -> (s, b)
+-- 'mapAccumLOf' :: 'Control.Lens.Iso.Iso' s t a b       -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
+-- 'mapAccumLOf' :: 'Lens' s t a b      -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
+-- 'mapAccumLOf' :: 'Traversal' s t a b -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
 -- @
-mapAccumLOf :: LensLike (Backwards (Lazy.State s)) a b c d -> (s -> c -> (s, d)) -> s -> a -> (s, b)
+mapAccumLOf :: LensLike (Backwards (Lazy.State acc)) s t a b -> (acc -> a -> (acc, b)) -> acc -> s -> (acc, t)
 mapAccumLOf = mapAccumROf . backwards
 {-# INLINE mapAccumLOf #-}
 
@@ -278,14 +271,14 @@ swap (a,b) = (b,a)
 -- @'scanr1' ≡ 'scanr1Of' 'traverse'@
 --
 -- @
--- 'scanr1Of' :: 'Control.Lens.Iso.Iso' a b c c       -> (c -> c -> c) -> a -> b
--- 'scanr1Of' :: 'Lens' a b c c      -> (c -> c -> c) -> a -> b
--- 'scanr1Of' :: 'Traversal' a b c c -> (c -> c -> c) -> a -> b
+-- 'scanr1Of' :: 'Control.Lens.Iso.Iso' s t a a       -> (a -> a -> a) -> s -> t
+-- 'scanr1Of' :: 'Lens' s t a a      -> (a -> a -> a) -> s -> t
+-- 'scanr1Of' :: 'Traversal' s t a a -> (a -> a -> a) -> s -> t
 -- @
-scanr1Of :: LensLike (Lazy.State (Maybe c)) a b c c -> (c -> c -> c) -> a -> b
+scanr1Of :: LensLike (Lazy.State (Maybe a)) s t a a -> (a -> a -> a) -> s -> t
 scanr1Of l f = snd . mapAccumROf l step Nothing where
-  step Nothing c  = (Just c, c)
-  step (Just s) c = (Just r, r) where r = f c s
+  step Nothing a  = (Just a, a)
+  step (Just s) a = (Just r, r) where r = f a s
 {-# INLINE scanr1Of #-}
 
 -- | This permits the use of 'scanl1' over an arbitrary 'Traversal' or 'Lens'.
@@ -293,41 +286,15 @@ scanr1Of l f = snd . mapAccumROf l step Nothing where
 -- @'scanl1' ≡ 'scanl1Of' 'traverse'@
 --
 -- @
--- 'scanr1Of' :: 'Control.Lens.Iso.Iso' a b c c       -> (c -> c -> c) -> a -> b
--- 'scanr1Of' :: 'Lens' a b c c      -> (c -> c -> c) -> a -> b
--- 'scanr1Of' :: 'Traversal' a b c c -> (c -> c -> c) -> a -> b
+-- 'scanr1Of' :: 'Control.Lens.Iso.Iso' s t a a       -> (a -> a -> a) -> s -> t
+-- 'scanr1Of' :: 'Lens' s t a a      -> (a -> a -> a) -> s -> t
+-- 'scanr1Of' :: 'Traversal' s t a a -> (a -> a -> a) -> s -> t
 -- @
-scanl1Of :: LensLike (Backwards (Lazy.State (Maybe c))) a b c c -> (c -> c -> c) -> a -> b
+scanl1Of :: LensLike (Backwards (Lazy.State (Maybe a))) s t a a -> (a -> a -> a) -> s -> t
 scanl1Of l f = snd . mapAccumLOf l step Nothing where
-  step Nothing c  = (Just c, c)
-  step (Just s) c = (Just r, r) where r = f s c
+  step Nothing a  = (Just a, a)
+  step (Just s) a = (Just r, r) where r = f s a
 {-# INLINE scanl1Of #-}
-
-------------------------------------------------------------------------------
--- Common Lenses
-------------------------------------------------------------------------------
-
--- | A 'Lens' to 'Control.Lens.Getter.view'/'Control.Lens.Setter.set' the nth element 'elementOf' a 'Traversal', 'Lens' or 'Control.Lens.Iso.Iso'.
---
--- Attempts to access beyond the range of the 'Traversal' will cause an error.
---
--- >>> [[1],[3,4]]^.elementOf (traverse.traverse) 1
--- 3
-elementOf :: Functor f => LensLike (ElementOf f) a b c c -> Int -> LensLike f a b c c
-elementOf l i f a = case getElementOf (l go a) 0 of
-    Found _ fb    -> fb
-    Searching _ _ -> error "elementOf: index out of range"
-    NotFound e    -> error $ "elementOf: " ++ e
-  where
-    go c = ElementOf $ \j -> if i == j then Found (j + 1) (f c) else Searching (j + 1) c
-
--- | Access the /nth/ element of a 'Traversable' container.
---
--- Attempts to access beyond the range of the 'Traversal' will cause an error.
---
--- @'element' ≡ 'elementOf' 'traverse'@
-element :: Traversable t => Int -> t a :-> a
-element = elementOf traverse
 
 ------------------------------------------------------------------------------
 -- Traversals
@@ -335,10 +302,10 @@ element = elementOf traverse
 
 -- | This is the trivial empty traversal.
 --
--- @'ignored' :: 'Applicative' f => (c -> f d) -> a -> f a@
+-- @'ignored' :: 'Applicative' f => (a -> f b) -> s -> f s@
 --
 -- @'ignored' ≡ 'const' 'pure'@
-ignored :: Traversal a a c d
+ignored :: Traversal s s a b
 ignored _ = pure
 {-# INLINE ignored #-}
 
@@ -394,6 +361,17 @@ traverseRight _ (Left c) = pure $ Left c
 traverseRight f (Right a) = Right <$> f a
 {-# INLINE traverseRight #-}
 
+-- | Visit the first /n/ targets of a 'Traversal', 'Fold', 'Getter' or 'Lens'.
+taking :: Applicative f => Int -> SimpleLensLike (Indexing f) s a -> SimpleLensLike f s a
+taking n l f s = case runIndexing (l (\a -> Indexing $ \i -> IndexingResult (if i < n then f a else pure a) (i + 1)) s) 0 of
+  IndexingResult r _ -> r
+{-# INLINE taking #-}
+
+-- | Visit all but the first /n/ targets of a 'Traversal', 'Fold', 'Getter' or 'Lens'.
+dropping :: Applicative f => Int -> SimpleLensLike (Indexing f) s a -> SimpleLensLike f s a
+dropping n l f s = case runIndexing (l (\a -> Indexing $ \i -> IndexingResult (if i >= n then f a else pure a) (i + 1)) s) 0 of
+  IndexingResult r _ -> r
+{-# INLINE dropping #-}
 
 ------------------------------------------------------------------------------
 -- Cloning Traversals
@@ -401,7 +379,7 @@ traverseRight f (Right a) = Right <$> f a
 
 -- | A 'Traversal' is completely characterized by its behavior on a 'Bazaar'.
 --
--- Cloning a 'Traversal' is one way to make sure you arent given
+-- Cloning a 'Traversal' is one way to make sure you aren't given
 -- something weaker, such as a 'Control.Lens.Traversal.Fold' and can be
 -- used as a way to pass around traversals that have to be monomorphic in @f@.
 --
@@ -416,13 +394,13 @@ traverseRight f (Right a) = Right <$> f a
 -- >>> foo both ("hello","world")
 -- ("helloworld",(10,10))
 --
--- @'cloneTraversal' :: 'LensLike' ('Bazaar' c d) a b c d -> 'Traversal' a b c d@
-cloneTraversal :: Applicative f => ((c -> Bazaar c d d) -> a -> Bazaar c d b) -> (c -> f d) -> a -> f b
+-- @'cloneTraversal' :: 'LensLike' ('Bazaar' a b) s t a b -> 'Traversal' s t a b@
+cloneTraversal :: Applicative f => ((a -> Bazaar a b b) -> s -> Bazaar a b t) -> (a -> f b) -> s -> f t
 cloneTraversal l f = bazaar f . l sell
 {-# INLINE cloneTraversal #-}
 
 -- | A form of 'Traversal' that can be stored monomorphically in a container.
-data ReifiedTraversal a b c d = ReifyTraversal { reflectTraversal :: Traversal a b c d }
+data ReifiedTraversal s t a b = ReifyTraversal { reflectTraversal :: Traversal s t a b }
 
 -- | @type SimpleReifiedTraversal = 'Simple' 'ReifiedTraversal'@
-type SimpleReifiedTraversal a b = ReifiedTraversal a a b b
+type SimpleReifiedTraversal s a = ReifiedTraversal s s a a

@@ -1,3 +1,47 @@
+3.3
+---
+* Redefined `simple` and moved it to `Control.Lens.Iso`. Instead of using `simple l` you can now compose `l.simple` or `simple.l` providing more nuanced control and a more compositional API.
+
+3.2
+---
+* Made `elementOf` lazier and moved it from `Control.Lens.Traversal` to `Control.Lens.Plated`.
+* Made `holesOf` and `partsOf` lazier to deal with infinite structures.
+* Resolved issue #75. We now generate nicer core for most `Setter` and `Fold` operations, and some others.
+* Made lenses for field access like `_1`, `_2`, etc. lazier.
+* Added `Control.Lens.Loupe`, which provides a limited form of `Lens` that can be read from and written to and which can compose
+  with other lenses, but can also be returned in a list or as a monadic result, but cannot be used directly for most combinators
+  without cloning it first. It is easier to compose than a `ReifiedLens`, but slightly slower.
+* Moved (`:=>`) and (`:->`) into `Control.Lens.Simple`, which is not exported by `Control.Lens` by default to reduce name conflicts with third party libraries.
+
+3.1
+---
+* Simplified the type of `filtered`, so that it can be composed with other folds rather than be parameterized on one. Included the caveat that the new `filtered` is still not a legal `Traversal`, despite seeming to compose like one.
+* Renamed `ifiltered` to `ifiltering`, and while it still must take an indexed lens-like as an argument, I included a similar caveat about the result not being a legal `IndexedLens` when given an `IndexedLens`. The function was renamed because its signature no longer lined up with the new `filtered` and the gerundive '-ing' suffix has come to indicate an operator that transformers another lens/traversal/etc. into a new one.
+* Added `taking` and `dropping` to `Control.Lens.Traversal`.
+
+3.0.6
+-----
+* Alpha-renamed all combinators to a new scheme. Instead of `Foo a b c d`, they now follow `Foo s t a b`. This means that you don't need to alpha rename everything in your head to work through the examples, simplifies exposition, and uses s and t for common state monad parameters. Thanks go to Shachaf Ben-Kiki for the grunt work of slogging through hundreds of definitions by hand and with regular expressions!
+* Restored lenses to `Trustworthy` status so they can be used with Safe Haskell once more.
+
+3.0.5
+-----
+* Fixed a bug in `rights1` and `lefts1` in `Control.Lens.Zipper` which would cause them to loop forever when given a 0 offset.
+
+3.0.4
+-----
+* Added `?~`, `<?~`, `?=` and `<?=` to `Control.Lens.Setter` for setting the target(s) of a Lens to `Just` a value. They are particularly useful when combined with `at`.
+
+3.0.3
+-----
+* Refined the behavior of `substType` in `Control.Lens.TH` to match the behavior of `typeVarsEx` when moving under binders.
+
+
+3.0.2
+-----
+* Added `generateSignatures` option to `Control.Lens.TH` to allow the end user to disable the generation of type signatures for the
+  template-haskell generated lenses. This lets the user supply hand-written haddocks and more restricted signatures.
+
 3.0.1
 -----
 * Added `Control.Lens.Type.simple`.
