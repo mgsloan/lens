@@ -6,16 +6,12 @@ module Control.Lens.Dsl
 
 import Control.Applicative
 import Control.Lens
-import Control.Lens.Internal (Context(..))
-import Control.Monad (when)
-import Data.Generics (Data, extT, extM, mkQ, everything, everywhereM, listify, gmapT)
+import Control.Monad         (when)
+import Data.Generics         (Data, extT, extM, mkQ, everything, everywhereM, listify, gmapT)
 import Data.List as List
 import qualified Data.Map as Map
-import Data.Maybe (fromJust)
 import Language.Haskell.TH
-import Language.Haskell.TH.Syntax
 import Language.Haskell.TH.Lens
-
 
 type a :->:  b = a -> b
 type a :=>:  b = a -> [b]
@@ -34,99 +30,125 @@ isoe       = (>>= lenqExp IsoVariety)
 traversale = (>>= lenqExp TraversalVariety)
 
 -- TODO: multiif, lambda case
--- TODO: guards??
+-- TODO: guards!??
 
--- | Internal
+-- TODO: how would we handle a "x * y" where both are lens names?
+type LenqFunc = Map.Map (Name, Int) Name
+
+-- Enumeration of supported lens library types
+
+-- (Traversal and Projection are still TODO)
+-- Desired variety of lens library type (determines the conversion process).
+-- This is a helper enumeration
 data LenqVariety = LensVariety | IsoVariety | TraversalVariety | ProjectionVariety
-  deriving Eq
+  deriving (Eq, Show)
 
+-- Internal helper function used to implement lense / traversale / isoe.
 lenqExp :: LenqVariety -> Exp -> ExpQ
-lenqExp v (ParensE e) = lenqExp v e
-lenqExp v e = case e of
-  (LamE ps (CaseE e' ms)) -> checkCase (last ps) ps e' ms
-  (LamE ps (LamE ps' e')) -> buildExp ps' [Match (last ps') (NormalB e') []]
+lenqExp variety (ParensE e) = lenqExp variety e
+lenqExp variety expr = case expr of
+  (LamE ps (CaseE e ms)) -> checkCase (last ps) ps e ms
+  (LamE ps e) -> buildExp ps [Match (last ps) (NormalB e) []]
   _ -> lenqError "Expected a lambda expression and an optional case statement."
  where
   checkCase (VarP v) ps e ms | (VarE v == e) = buildExp ps ms
   checkCase _ _ _ _ = lenqError "Case statements must just case on the last parameter."
   buildExp ps ms = do
     func <- newName "func"
-    dec <- lenqFunc v func $ map toClause ms
+    dec <- lenqFunc variety func $ map (\(Match p b ds) -> Clause [p] b ds) ms
     return . LamE (init ps) $ LetE [dec] (VarE func)
-  toClause :: Match -> Clause
-  toClause (Match p b ds) = Clause [p] b ds
 
+-- Internal helper function used to implement lenq.  It consumes a list of
+-- functions, and converts them to Lenses / Isos / Traversals.  This transformation
+-- is conditional on the types.
 lenqDecs :: [Dec] -> DecsQ
 lenqDecs ds = fmap concat $ mapM doLens ds
  where
-  sigMap = Map.fromList [(n, t) | s@(SigD n t) <- ds]
+-- Map from names to types.
+  sigMap = Map.fromList [(n, t) | SigD n t <- ds]
+
   doLens (FunD n cs) = case Map.lookup n sigMap of
+-- By default they're treated as traversals
     Nothing -> fmap (:[]) $ lenqFunc TraversalVariety n cs
     (Just t) -> fmap (\dec -> [SigD n t', dec]) $ lenqFunc variety n cs
-     where
-      traverseType f t@(ForallT _ _ _) = (traverseArrowT . forallLens) f t
-      traverseType f t = traverseArrowT f t
-      (variety, t') = case holesOf traverseType t of
-        [] -> imposs "traverseArrowT always yields something"
-        xs -> case last xs of
-          (Context f tl) ->
-            let whenSimpleLens      l r = (LensVariety,      f $ appsT [ConT ''SimpleLens,      l, r])
-                whenSimpleTraversal l r = (TraversalVariety, f $ appsT [ConT ''SimpleTraversal, l, r])
-                whenSimpleIso       l r = (IsoVariety,       f $ appsT [ConT ''SimpleIso,       l, r])
-            in case tl of
-              (AppT (AppT (ConT op) l) r)
-                | op `elem` [''(:->:),  ''SimpleLens]      -> whenSimpleLens      l r
-                | op `elem` [''(:=>:),  ''SimpleTraversal] -> whenSimpleTraversal l r
-                | op `elem` [''(:<->:), ''SimpleIso]       -> whenSimpleIso       l r
-              (AppT (AppT (AppT (ConT simpl) (ConT op)) l) r)
-                | (simpl, op) == (''Simple, ''Lens)        -> whenSimpleLens      l r
-                | (simpl, op) == (''Simple, ''Traversal)   -> whenSimpleTraversal l r
-                | (simpl, op) == (''Simple, ''Iso)         -> whenSimpleIso       l r
-              (AppT (AppT (AppT (AppT (ConT op) a) b) c) d)
-                | op == ''LenqLens      -> (LensVariety,      f $ appsT [ConT ''Lens,      a, b, c, d])
-                | op == ''LenqTraversal -> (TraversalVariety, f $ appsT [ConT ''Traversal, a, b, c, d])
-                | op == ''LenqIso       -> (IsoVariety,       f $ appsT [ConT ''Iso,       a, b, c, d])
-              _ -> lenqError $ unlines
-                 [ "Expected a Lens, Traversal, or Iso in type signature of " ++ pprint n ++ "."
-                 , "In particular, this portion: " ++ pprint tl
-                 ]
+--"variety" determines how the transformation will proceed, while t' is the rewritten type
+      where (variety, t') = processLenqType n t
   doLens (SigD _ _) = return []
   doLens _ = lenqError "Function declarations and signatures only."
 
+processLenqType :: Name -> Type -> (LenqVariety, Type)
+processLenqType n sigType =
+
+  let simpleLensT      l r = (LensVariety,      rebuild $ appsT [ConT ''SimpleLens,      l, r])
+      simpleTraversalT l r = (TraversalVariety, rebuild $ appsT [ConT ''SimpleTraversal, l, r])
+      simpleIsoT       l r = (IsoVariety,       rebuild $ appsT [ConT ''SimpleIso,       l, r])
+
+      traverseType f t@(ForallT _ _ _) = (traverseArrowT . forallLens) f t
+      traverseType f t = traverseArrowT f t
+
+      (Context rebuild resultType) = last $ holesOf traverseType sigType
+
+  in case resultType of
+-- Operators for the Simple types
+      (AppT (AppT (ConT op) l) r)
+        | op == ''(:->:)  -> simpleLensT      l r
+        | op == ''(:=>:)  -> simpleTraversalT l r
+        | op == ''(:<->:) -> simpleIsoT       l r
+-- Usage of the "Simple" type synonym
+      (AppT (AppT (AppT (ConT simpl) (ConT op)) l) r)
+        | (simpl, op) == (''Simple, ''LenqLens)      -> simpleLensT      l r
+        | (simpl, op) == (''Simple, ''LenqTraversal) -> simpleTraversalT l r
+        | (simpl, op) == (''Simple, ''LenqIso)       -> simpleIsoT       l r
+-- Full types given
+      (AppT (AppT (AppT (AppT (ConT op) a) b) c) d)
+        | op == ''LenqLens      -> (LensVariety,      rebuild $ appsT [ConT ''Lens,      a, b, c, d])
+        | op == ''LenqTraversal -> (TraversalVariety, rebuild $ appsT [ConT ''Traversal, a, b, c, d])
+        | op == ''LenqIso       -> (IsoVariety,       rebuild $ appsT [ConT ''Iso,       a, b, c, d])
+-- Fallthrough case
+      _ -> lenqError $ unlines
+         [ "Expected a Lens, Traversal, or Iso in type signature of " ++ pprint n ++ "."
+         , "In particular, this portion: " ++ pprint sigType
+         ]
+
+
+-- This is where the commonality between "lenqExp" and "lenqDecs" starts.
+-- This function takes the variety of lens to produce, the name of the function
+-- that should be generated
 lenqFunc :: LenqVariety -> Name -> [Clause] -> DecQ
 lenqFunc variety n cs = case variety of
   LensVariety -> do
     f <- newName "f"
     funD n $ map (lensClause f) cs
   IsoVariety -> do
-    to <- newName "to"
-    fr <- newName "fr"
-    let (Clause patsEx _ _:_) = cs
-    vs <- mapM (const $ newName "v") (tail patsEx)
+    g <- newName "g"
+    h <- newName "h"
+    let (Clause pats _ _:_) = cs
+    vs <- mapM (const $ newName "v") (tail pats)
     let body = normalB $ appsE
              [ varE 'iso
-             , appsE . map varE $ to : vs
-             , appsE . map varE $ fr : vs
+             , appsE . map varE $ g : vs
+             , appsE . map varE $ h : vs
              ]
     funD n
       [clause (map varP vs) body
-        [ funD to $ map (isoClause True ) cs
-        , funD fr $ map (isoClause False) cs
+        [ funD g $ map (isoClause True ) cs
+        , funD h $ map (isoClause False) cs
         ]
       ]
+  _ -> lenqError $ show variety ++ " not yet supported."
 
 -- Not really an isomorphism due to error partialness
 checkedClause :: Simple Iso Clause ([Pat], Pat, Exp)
-checkedClause = iso fr to
+checkedClause = iso f g
  where
-  fr (Clause _ (GuardedB _) _) = lenqError "Guard statements not yet supported."
-  fr (Clause ps (NormalB e) wheres)
-    | null ps = lenqError "Lenq requires at least one pattern match."
-    | not $ null wheres = lenqError "Where statements not yet supported."
-    | otherwise = (init ps, last ps, e)
-  to (ps, p, e) = Clause (ps ++ [p]) (NormalB e) []
+  f (Clause _ (GuardedB _) _) = lenqError "Guard statements not yet supported."
+  f (Clause ps (NormalB e) ws)
+    | null ps                  = lenqError "Lenq requires at least one pattern match."
+    | not $ null ws            = lenqError "Where statements not yet supported."
+    | otherwise                = (init ps, last ps, e)
+  g (ps, p, e) = Clause (ps ++ [p]) (NormalB e) []
 
---TODO: A better definition ought to exist.
+-- TODO: A better definition ought to exist.
 overM :: Monad m => Lens a b c d -> (c -> m d) -> a -> m b
 overM l f x = do
   v' <- f $ x ^. l
@@ -154,18 +176,49 @@ isoClause forward = overM checkedClause $ \(ps, p, expr) -> do
        $ recBackward r
   processBackward e = recBackward e
 
+{-
+traversalClause :: Name -> Clause -> Q Clause
+traversalClause f = overM checkedClause $ \(pats, pat, expr) -> do
+  let vars = allVarP p
+
+  (outs, inExps) <- doExpr vars expr
+
+  checkNames $ vars ++ outs
+
+  pat' <- everywhereM (return `extM` replaceWild) pat
+  outExp <- patToExpFail pat pat'
+
+  case inExps of
+    [] -> return $ AppE (VarE 'pure) outExp
+    (e1:rest) -> return $ foldr (\l r -> InfixE (Just l) (VarE '(<*>)) (Just r)) initial rest
+     where
+      initial = InfixE
+        (Just $ LamE (map VarE outs) outExp)
+        (VarE '(<$>))
+        (Just e1)
+-}
+
+checkNames :: [Name] -> Q ()
+checkNames ns = do
+  let grouped  = groupBy (==) $ sort ns
+      showEm   = show . map (mkName . nameBase . head)
+      unused   = filter ((<=1) . length) grouped
+      overused = filter ((>2)  . length) grouped
+
+  when (not (null unused) || not (null overused)) . lenqError . unlines
+    $ [ "Variables bound in the lens pattern must be used exactly once in the result." ]
+    ++ (if null unused   then [] else ["The following are unused: "  ++ showEm unused  ])
+    ++ (if null overused then [] else ["The following are overused:" ++ showEm overused])
+
 lensClause :: Name -> Clause -> Q Clause
 lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
-  (outTup, inExp) <- doExpr (allVarP pat) expr
+  let vars = allVarP pat
 
-  let dups = filter null . map tail . groupBy (==) . sort $ namesIn outTup
+  (outTup, inExp) <- doExpr vars expr
 
-  when (null dups) . lenqError $ unlines
-    [ "Variables bound in the lens pattern cannot be used multiple times in the result."
-    , "The following are duplicates: " ++ show dups
-    ]
+  checkNames $ vars ++ namesIn outTup
 
-  inTup <- patToExp (const $ imposs "In converting pattern for outer tuple representation.") outTup
+  inTup <- patToExp (const $ impossible "In converting pattern for outer tuple representation.") outTup
 
   -- Replaces wildcards with variables, to preserve non-overwritten variables
   pat' <- everywhereM (return `extM` replaceWild) pat
@@ -180,8 +233,8 @@ lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
   lamLens p e p' p'' e' = appsE [varE 'lens, lamE [p] e, lamE [p', p''] e']
 
   bijLens p e = lamLens (return p) (return e) wildP
-    (expToPat (const $ imposs "When doing exp-to-pat for constructor-tuple bijection in lens.") e)
-    (patToExp (const $ imposs "When doing pat-to-exp for constructor-tuple bijection in lens.") p)
+    (expToPat (const $ impossible "When doing exp-to-pat for constructor-tuple bijection in lens.") e)
+    (patToExp (const $ impossible "When doing pat-to-exp for constructor-tuple bijection in lens.") p)
 
   constLens e = lamLens wildP (return e) wildP wildP (return e)
 
@@ -259,62 +312,68 @@ lensClause f = overM checkedClause $ \(pats, pat, expr) -> do
   namesIn = listify (const True :: Name -> Bool)
 
 -- Replace wildcard with new variable.
-  replaceWild WildP = VarP <$> newName "x"
-  replaceWild p     = return p
+replaceWild :: Pat -> PatQ
+replaceWild WildP = VarP <$> newName "x"
+replaceWild p     = return p
 
 patToExpFail :: Applicative f => Pat -> Pat -> f Exp
 patToExpFail userp = patToExp (lenqError . msg)
   where
     msg pp = "Pattern " ++ pprint pp ++ ", from within " ++ pprint userp ++ " has no expression equivalent."
 
--- | Converts a pattern to an expression.
+-- | Converts a pattern to an expression, with a user-provided function for failure cases.
 -- Almost looks like a traversal, but isn't!
 patToExp :: Applicative f => (Pat -> f Exp) -> Pat -> f Exp
 patToExp _ (LitP l)         = pure $ LitE l
 patToExp _ (VarP n)         = pure $ VarE n
-patToExp f (TupP ps)        = TupE                     <$> traverse (patToExp f) ps
-patToExp f (UnboxedTupP ps) = UnboxedTupE              <$> traverse (patToExp f) ps
-patToExp f (ListP ps)       = ListE                    <$> traverse (patToExp f) ps
-patToExp f (ConP n ps)      = List.foldl AppE (ConE n) <$> traverse (patToExp f) ps
-patToExp f (RecP n fs)      = RecConE n                <$> traverse (_2 $ patToExp f) fs
-patToExp f (InfixP l n r)   = InfixE  <$> (Just <$> patToExp f l) <*> pure (ConE n) <*> (Just <$> patToExp f r)
+patToExp f (ConP n ps)      = consE n     <$> traverse (patToExp f) ps
+patToExp f (TupP ps)        = TupE        <$> traverse (patToExp f) ps
+patToExp f (UnboxedTupP ps) = UnboxedTupE <$> traverse (patToExp f) ps
+patToExp f (ListP ps)       = ListE       <$> traverse (patToExp f) ps
+patToExp f (RecP n fs)      = RecConE n   <$> traverse (_2 $ patToExp f) fs
+patToExp f (SigP p t)       = SigE        <$> patToExp f p <*> pure t
+patToExp f (ParensP p)      = ParensE     <$> patToExp f p
 patToExp f (UInfixP l n r)  = UInfixE <$>           patToExp f l  <*> pure (ConE n) <*>           patToExp f r
-patToExp f (SigP p t)       = SigE                     <$> patToExp f p <*> pure t
-patToExp f (ParensP p)      = ParensE                  <$> patToExp f p
+patToExp f (InfixP l n r)   = InfixE  <$> (Just <$> patToExp f l) <*> pure (ConE n) <*> (Just <$> patToExp f r)
 patToExp f (TildeP p)       = patToExp f p
 patToExp f (BangP p)        = patToExp f p
 patToExp f p                = f p
 
--- | Converts an expression to a pattern.
+-- | Converts an expression to a pattern, with a user-provided function for failure cases.
 -- Almost looks like a traversal, but isn't!
 expToPat :: Applicative f => (Exp -> f Pat) -> Exp -> f Pat
 expToPat _ (LitE l)         = pure $ LitP l
 expToPat _ (VarE n)         = pure $ VarP n
 expToPat _ (ConE n)         = pure $ ConP n []
+expToPat f e@(AppE _ _) = case e ^.. traverseAppE of
+  (ConE n:xs) -> ConP n <$> traverse (expToPat f) xs
+  _ -> f e
 expToPat f (TupE ps)        = TupP        <$> traverse (expToPat f) ps
 expToPat f (UnboxedTupE ps) = UnboxedTupP <$> traverse (expToPat f) ps
 expToPat f (ListE ps)       = ListP       <$> traverse (expToPat f) ps
 expToPat f (RecConE n fs)   = RecP n      <$> traverse (_2 $ expToPat f) fs 
-expToPat f ( InfixE (Just l) (ConE n) (Just r)) =  InfixP <$> expToPat f l <*> pure n <*> expToPat f r
-expToPat f (UInfixE       l  (ConE n)       r ) = UInfixP <$> expToPat f l <*> pure n <*> expToPat f r
 expToPat f (SigE p t)       = SigP        <$> expToPat f p <*> pure t
 expToPat f (ParensE p)      = ParensP     <$> expToPat f p
-expToPat f e@(AppE _ _) = case e ^.. traverseAppE of
-  (ConE n:xs) -> ConP n <$> traverse (expToPat f) xs
-  _ -> f e
+expToPat f (UInfixE       l  (ConE n)       r ) = UInfixP <$> expToPat f l <*> pure n <*> expToPat f r
+expToPat f ( InfixE (Just l) (ConE n) (Just r)) =  InfixP <$> expToPat f l <*> pure n <*> expToPat f r
 expToPat f e = f e
 
 apps :: [Exp] -> Exp
 apps = foldl1 AppE
 
+consE :: Name -> [Exp] -> Exp
+consE n = apps . (ConE n:)
+
 appsT :: [Type] -> Type
 appsT = foldl1 AppT
 
-imposs :: String -> a
-imposs = lenqError . ("The impossible happened!! " ++)
+impossible :: String -> a
+impossible = lenqError . ("The impossible happened!! " ++)
+
 lenqError :: String -> a
 --  lenqError = (>> return undefined) . report True  . ("LENQ: "++)
 lenqError = error . ("LENQ: "++)
+
 rWarn :: String -> Q a
 rWarn = (>> return undefined) . report False . ("LENQ: "++)
 
@@ -359,4 +418,3 @@ processNames mp = everywhere (id `extT` process)
   isU (Name _ (NameU _)) = True
   isU _ = False
 -}
-
