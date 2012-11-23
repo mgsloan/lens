@@ -1,3 +1,12 @@
+3.6
+-----
+* Added `field` to `Control.Lens.Type`, which can be used to generate a Lens from a field accessor by abusing `Data.Data` without quasiquotation.
+* Added some missing examples/ files to the distribution.
+* Renamed `Data.Bits.Lens.traverseBits` to `bits`.
+* Removed `(^!?)`, which was an alias for `(^?!)`.
+* Removed the need for `Trustworthy` by changing the implementation of `coerce` for `BazaarT`.
+* Moved BazaarT to `Control.Lens.Internal`.
+
 3.5.1
 -----
 * Improved SafeHaskell inference.
