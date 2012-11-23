@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Control.Lens.Indexed
@@ -86,7 +87,7 @@ icompose :: Indexed k r => (i -> j -> k) -> Index i b c -> Index j a b -> r a c
 icompose ijk (Index ibc) (Index jab) = index $ \ka -> ibc $ \i -> jab $ \j -> ka (ijk i j)
 {-# INLINE icompose #-}
 
--- | Transform an Traversal into an IndexedTraversal, a Fold into an IndexedFold, etc.
+-- | Transform an 'Traversal' into an 'Control.Lens.IndexedTraversal.IndexedTraversal', a 'Fold' into an 'Control.Lens.IndexedFold.IndexedFold', etc.
 --
 -- @
 -- 'indexed' :: 'Control.Lens.Traversal.Traversal' s t a b -> 'Control.Lens.IndexedTraversal.IndexedTraversal' 'Int' s t a b
@@ -96,6 +97,7 @@ icompose ijk (Index ibc) (Index jab) = index $ \ka -> ibc $ \i -> jab $ \j -> ka
 -- 'indexed' :: 'Control.Lens.Getter.Getter' s t        -> 'Control.Lens.IndexedGetter.IndexedGetter' 'Int' s t a b
 -- @
 indexed :: Indexed Int k => ((a -> Indexing f b) -> s -> Indexing f t) -> k (a -> f b) (s -> f t)
-indexed l = index $ \iafb s -> case runIndexing (l (\a -> Indexing (\i -> IndexingResult (iafb i a) (i + 1))) s) 0 of
-  IndexingResult r _ -> r
+indexed l = index $ \iafb s -> case runIndexing (l (\a -> Indexing (\i -> (iafb i a, i + 1))) s) 0 of
+  (r, _) -> r
 {-# INLINE indexed #-}
+

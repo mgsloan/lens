@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
 {-# LANGUAGE Trustworthy #-}
@@ -32,8 +33,10 @@ module Control.Lens.IndexedTraversal
   , traverseAt
   , iwhereOf
   , value
+  , ignored
   , TraverseMin(..)
   , TraverseMax(..)
+  , traversed
 
   -- * Indexed Traversal Combinators
   , itraverseOf
@@ -204,11 +207,24 @@ traverseAt :: At k m => k -> SimpleIndexedTraversal k (m v) v
 traverseAt k = at k <. traverse
 {-# INLINE traverseAt #-}
 
+-- | Traverse any 'Traversable' container. This is an 'IndexedTraversal' that is indexed by ordinal position.
+traversed :: Traversable f => IndexedTraversal Int (f a) (f b) a b
+traversed = indexed traverse
+
 -- | This provides a 'Traversal' that checks a predicate on a key before
 -- allowing you to traverse into a value.
 value :: (k -> Bool) -> SimpleIndexedTraversal k (k, v) v
 value p = index $ \ f kv@(k,v) -> if p k then (,) k <$> f k v else pure kv
 {-# INLINE value #-}
+
+-- | This is the trivial empty traversal.
+--
+-- @'ignored' :: 'IndexedTraversal' i s s a b@
+--
+-- @'ignored' ≡ 'const' 'pure'@
+ignored :: forall k f i s a b. (Indexed i k, Applicative f) => Overloaded k f s s a b
+ignored = index $ \ (_ :: i -> a -> f b) s -> pure s :: f s
+{-# INLINE ignored #-}
 
 -- | Allows 'IndexedTraversal' the value at the smallest index.
 class Ord k => TraverseMin k m | m -> k where

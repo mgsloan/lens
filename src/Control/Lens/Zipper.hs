@@ -40,7 +40,7 @@
 -- Since individual levels of a zipper are managed by an arbitrary 'Traversal',
 -- you can move left and right through the 'Traversal' selecting neighboring elements.
 --
--- >>> zipper ("hello","world") % down _1 % fromWithin traverse % focus .~ 'J' % rightmost % focus .~ 'y' % rezip
+-- >>> zipper ("hello","world") & down _1 & fromWithin traverse & focus .~ 'J' & rightmost & focus .~ 'y' & rezip
 -- ("Jelly","world")
 --
 -- This is particularly powerful when compiled with 'Control.Lens.Plated.plate',
@@ -82,7 +82,7 @@ import Control.Monad ((>=>))
 import Control.Lens.Indexed
 import Control.Lens.IndexedLens
 import Control.Lens.Internal
-import Control.Lens.Plated
+import Control.Lens.Traversal
 import Control.Lens.Type
 import Data.List.NonEmpty as NonEmpty
 import Prelude hiding ((.),id)
@@ -103,7 +103,7 @@ infixl 9 :>
 -- used in website navigation. Each breadcrumb in the trail represents a level you
 -- can move up to.
 --
--- This type operator associates to the right, so you can use a type like
+-- This type operator associates to the left, so you can use a type like
 --
 -- @'Top' ':>' ('String','Double') ':>' 'String' ':>' 'Char'@
 --
@@ -268,7 +268,7 @@ down l (Zipper h (Level n ls b rs)) = case l (Context id) b of
 -- 'within' :: 'Simple' 'Iso' b c       -> (a :> b) -> Maybe (a :> b :> c)
 -- @
 within :: SimpleLensLike (Bazaar c c) b c -> (a :> b) -> Maybe (a :> b :> c)
-within l (Zipper h (Level n ls b rs)) = case partsOf l (Context id) b of
+within l (Zipper h (Level n ls b rs)) = case partsOf' l (Context id) b of
   Context _ []     -> Nothing
   Context k (c:cs) -> Just (Zipper (Snoc h n l ls (k . NonEmpty.toList) rs) (Level 0 [] c cs))
 {-# INLINE within #-}
@@ -285,12 +285,12 @@ within l (Zipper h (Level n ls b rs)) = case partsOf l (Context id) b of
 --
 -- You can reason about this function as if the definition was:
 --
--- @'fromWithin' l ≡ 'fromJust ' '.' 'within' l@
+-- @'fromWithin' l ≡ 'fromJust' '.' 'within' l@
 --
 -- but it is lazier in such a way that if this invariant is violated, some code
 -- can still succeed if it is lazy enough in the use of the focused value.
 fromWithin :: SimpleLensLike (Bazaar c c) b c -> (a :> b) -> a :> b :> c
-fromWithin l (Zipper h (Level n ls b rs)) = case partsOf l (Context id) b of
+fromWithin l (Zipper h (Level n ls b rs)) = case partsOf' l (Context id) b of
   Context k cs -> Zipper (Snoc h n l ls (k . NonEmpty.toList) rs)
                          (Level 0 [] (Prelude.head cs) (Prelude.tail cs))
 {-# INLINE fromWithin #-}

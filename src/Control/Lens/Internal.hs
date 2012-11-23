@@ -10,7 +10,6 @@
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
 {-# LANGUAGE Trustworthy #-}
 #endif
-
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Control.Lens.Internal
@@ -26,7 +25,39 @@
 -- \"Family\" and need to add instances.
 --
 ----------------------------------------------------------------------------
-module Control.Lens.Internal where
+module Control.Lens.Internal
+  (
+  -- * Internal Types
+    May(..)
+  , Folding(..)
+  , Effect(..)
+  , EffectRWS(..)
+  , Accessor(..)
+  , Err(..)
+  , Traversed(..)
+  , Sequenced(..)
+  , Focusing(..)
+  , FocusingWith(..)
+  , FocusingPlus(..)
+  , FocusingOn(..)
+  , FocusingMay(..)
+  , FocusingErr(..)
+  , Mutator(..)
+  , Bazaar(..), bazaar, duplicateBazaar, sell
+  , Context(..)
+  , Max(..), getMax
+  , Min(..), getMin
+  , ElementOfResult(..), ElementOf(..)
+  , Indexing(..)
+  , Level(..)
+  , levelWidth
+  , leftLevel, left1Level, leftmostLevel
+  , rightmostLevel, rightLevel, right1Level
+  , focusLevel
+  , rezipLevel
+  -- * Hidden implementations
+  , BazaarT
+  ) where
 
 import Control.Applicative
 import Control.Applicative.Backwards
@@ -34,6 +65,9 @@ import Control.Category
 import Control.Comonad
 import Control.Comonad.Store.Class
 import Control.Lens.Isomorphic
+import Control.Lens.Internal.BazaarT
+import Control.Lens.Classes
+import Control.Lens.Unsafe
 import Control.Monad
 import Prelude hiding ((.),id)
 import Data.Foldable
@@ -44,174 +78,6 @@ import Data.Maybe
 import Data.Monoid
 import Data.Traversable
 import Unsafe.Coerce
-
-const# :: (a -> b) -> a -> Const b r
-const# = unsafeCoerce
-
-getConst# :: (a -> Const b r) -> a -> b
-getConst# = unsafeCoerce
-
-zipList# :: (a -> [b]) -> a -> ZipList b
-zipList# = unsafeCoerce
-
-getZipList# :: (a -> ZipList b) -> a -> [b]
-getZipList# = unsafeCoerce
-
-wrapMonad# :: (a -> m b) -> a -> WrappedMonad m b
-wrapMonad# = unsafeCoerce
-
-unwrapMonad# :: (a -> WrappedMonad m b) -> a -> m b
-unwrapMonad# = unsafeCoerce
-
-last# :: (a -> Maybe b) -> a -> Last b
-last# = unsafeCoerce
-
-getLast# :: (a -> Last b) -> a -> Maybe b
-getLast# = unsafeCoerce
-
-first# :: (a -> Maybe b) -> a -> First b
-first# = unsafeCoerce
-
-getFirst# :: (a -> First b) -> a -> Maybe b
-getFirst# = unsafeCoerce
-
-product# :: (a -> b) -> a -> Product b
-product# = unsafeCoerce
-
-getProduct# :: (a -> Product b) -> a -> b
-getProduct# = unsafeCoerce
-
-sum# :: (a -> b) -> a -> Sum b
-sum# = unsafeCoerce
-
-getSum# :: (a -> Sum b) -> a -> b
-getSum# = unsafeCoerce
-
-any# :: (a -> Bool) -> a -> Any
-any# = unsafeCoerce
-
-getAny# :: (a -> Any) -> a -> Bool
-getAny# = unsafeCoerce
-
-all# :: (a -> Bool) -> a -> All
-all# = unsafeCoerce
-
-getAll# :: (a -> All) -> a -> Bool
-getAll# = unsafeCoerce
-
-dual# :: (a -> b) -> a -> Dual b
-dual# = unsafeCoerce
-
-getDual# :: (a -> Dual b) -> a -> b
-getDual# = unsafeCoerce
-
-endo# :: (a -> b -> b) -> a -> Endo b
-endo# = unsafeCoerce
-
-appEndo# :: (a -> Endo b) -> a -> b -> b
-appEndo# = unsafeCoerce
-
-may# :: (a -> Maybe b) -> a -> May b
-may# = unsafeCoerce
-
-getMay# :: (a -> May b) -> a -> Maybe b
-getMay# = unsafeCoerce
-
-folding# :: (a -> f b) -> a -> Folding f b
-folding# = unsafeCoerce
-
-getFolding# :: (a -> Folding f b) -> a -> f b
-getFolding# = unsafeCoerce
-
-effect# :: (a -> m r) -> a -> Effect m r b
-effect# = unsafeCoerce
-
-getEffect# :: (a -> Effect m r b) -> a -> m r
-getEffect# = unsafeCoerce
-
-effectRWS# :: (a -> st -> m (s, st, w)) -> a -> EffectRWS w st m s b
-effectRWS# = unsafeCoerce
-
-getEffectRWS# :: (a -> EffectRWS w st m s b) -> a -> st -> m (s, st, w)
-getEffectRWS# = unsafeCoerce
-
-accessor# :: (a -> r) -> a -> Accessor r b
-accessor# = unsafeCoerce
-
-runAccessor# :: (a -> Accessor r b) -> a -> r
-runAccessor# = unsafeCoerce
-
-err# :: (a -> Either e b) -> a -> Err e b
-err# = unsafeCoerce
-
-getErr# :: (a -> Err e b) -> a -> Either e b
-getErr# = unsafeCoerce
-
-traversed# :: (a -> f ()) -> a -> Traversed f
-traversed# = unsafeCoerce
-
-getTraversed# :: (a -> Traversed f) -> a -> f ()
-getTraversed# = unsafeCoerce
-
-sequenced# :: (a -> f ()) -> a -> Sequenced f
-sequenced# = unsafeCoerce
-
-getSequenced# :: (a -> Sequenced f) -> a -> f ()
-getSequenced# = unsafeCoerce
-
-focusing# :: (a -> m (s, b)) -> a -> Focusing m s b
-focusing# = unsafeCoerce
-
-unfocusing# :: (a -> Focusing m s b) -> a -> m (s, b)
-unfocusing# = unsafeCoerce
-
-focusingWith# :: (a -> m (s, b, w)) -> a -> FocusingWith w m s b
-focusingWith# = unsafeCoerce
-
-unfocusingWith# :: (a -> FocusingWith w m s b) -> a -> m (s, b, w)
-unfocusingWith# = unsafeCoerce
-
-focusingPlus# :: (a -> k (s, w) b) -> a -> FocusingPlus w k s b
-focusingPlus# = unsafeCoerce
-
-unfocusingPlus# :: (a -> FocusingPlus w k s b) -> a -> k (s, w) b
-unfocusingPlus# = unsafeCoerce
-
-focusingOn# :: (a -> k (f s) b) -> a -> FocusingOn f k s b
-focusingOn# = unsafeCoerce
-
-unfocusingOn# :: (a -> FocusingOn f k s b) -> a -> k (f s) b
-unfocusingOn# = unsafeCoerce
-
-focusingMay# :: (a -> k (May s) b) -> a -> FocusingMay k s b
-focusingMay# = unsafeCoerce
-
-unfocusingMay# :: (a -> FocusingMay k s b) -> a -> k (May s) b
-unfocusingMay# = unsafeCoerce
-
-focusingErr# :: (a -> k (Err e s) b) -> a -> FocusingErr e k s b
-focusingErr# = unsafeCoerce
-
-unfocusingErr# :: (a -> FocusingErr e k s b) -> a -> k (Err e s) b
-unfocusingErr# = unsafeCoerce
-
-bazaar# :: (forall f. Applicative f => a -> (c -> f d) -> f t) -> a -> Bazaar c d t
-bazaar# = unsafeCoerce
-
-runBazaar# :: Applicative f => (a -> Bazaar c d t) -> a -> (c -> f d) -> f t
-runBazaar# = unsafeCoerce
-
-mutator# :: (a -> b) -> a -> Mutator b
-mutator# = unsafeCoerce
-
-runMutator# :: (a -> Mutator b) -> a -> b
-runMutator# = unsafeCoerce
-
-backwards# :: (a -> f b) -> a -> Backwards f b
-backwards# = unsafeCoerce
-
-forwards# :: (a -> Backwards f b) -> a -> f b
-forwards# = unsafeCoerce
 
 -----------------------------------------------------------------------------
 -- Functors
@@ -305,28 +171,25 @@ instance Applicative (k (Err e s)) => Applicative (FocusingErr e k s) where
   pure = FocusingErr . pure
   FocusingErr kf <*> FocusingErr ka = FocusingErr (kf <*> ka)
 
--- | The result of 'Indexing'
-data IndexingResult f a = IndexingResult (f a) {-# UNPACK #-} !Int
-
-instance Functor f => Functor (IndexingResult f) where
-  fmap f (IndexingResult fa n) = IndexingResult (fmap f fa) n
-
 -- | Applicative composition of @'Control.Monad.Trans.State.Lazy.State' 'Int'@ with a 'Functor', used
 -- by 'Control.Lens.Indexed.indexed'
-newtype Indexing f a = Indexing { runIndexing :: Int -> IndexingResult f a }
+newtype Indexing f a = Indexing { runIndexing :: Int -> (f a, Int) }
 
 instance Functor f => Functor (Indexing f) where
-  fmap f (Indexing m) = Indexing $ \i -> fmap f (m i)
+  fmap f (Indexing m) = Indexing $ \i -> case m i of
+    (x, j) -> (fmap f x, j)
 
 instance Applicative f => Applicative (Indexing f) where
-  pure = Indexing . IndexingResult . pure
+  pure x = Indexing (\i -> (pure x, i))
   Indexing mf <*> Indexing ma = Indexing $ \i -> case mf i of
-    IndexingResult ff j -> case ma j of
-       IndexingResult fa k -> IndexingResult (ff <*> fa) k
+    (ff, j) -> case ma j of
+       ~(fa, k) -> (ff <*> fa, k)
+
+instance Trustworthy f => Trustworthy (Indexing f)
 
 instance Gettable f => Gettable (Indexing f) where
   coerce (Indexing m) = Indexing $ \i -> case m i of
-    IndexingResult ff j -> IndexingResult (coerce ff) j
+    (ff, j) -> (coerce ff, j)
 
 -- | Used internally by 'Control.Lens.Traversal.traverseOf_' and the like.
 newtype Traversed f = Traversed { getTraversed :: f () }
@@ -369,7 +232,6 @@ instance Ord a => Monoid (Max a) where
 getMax :: Max a -> Maybe a
 getMax NoMax   = Nothing
 getMax (Max a) = Just a
-
 
 -- | The indexed store can be used to characterize a 'Control.Lens.Type.Lens'
 -- and is used by 'Control.Lens.Type.clone'
@@ -467,11 +329,27 @@ instance (Monad m, Monoid r) => Applicative (Effect m r) where
   pure _ = Effect (return mempty)
   Effect ma <*> Effect mb = Effect (liftM2 mappend ma mb)
 
+instance Trustworthy (Effect m r)
+
+instance Gettable (Effect m r) where
+  coerce (Effect m) = Effect m
+
+instance Monad m => Effective m r (Effect m r) where
+  effective = isomorphic Effect getEffect
+  {-# INLINE effective #-}
+
 -- | Wrap a monadic effect with a phantom type argument. Used when magnifying RWST.
 newtype EffectRWS w st m s a = EffectRWS { getEffectRWS :: st -> m (s,st,w) }
 
 instance Functor (EffectRWS w st m s) where
   fmap _ (EffectRWS m) = EffectRWS m
+
+instance Trustworthy (EffectRWS w st m s)
+
+instance Gettable (EffectRWS w st m s) where
+  coerce (EffectRWS m) = EffectRWS m
+
+-- Effective EffectRWS
 
 instance (Monoid s, Monoid w, Monad m) => Applicative (EffectRWS w st m s) where
   pure _ = EffectRWS $ \st -> return (mempty, st, mempty)
@@ -490,42 +368,11 @@ instance (Monoid s, Monad m) => Applicative (EffectS st m s) where
 -}
 
 -------------------------------------------------------------------------------
--- Gettables & Accessors
+-- Accessors
 -------------------------------------------------------------------------------
-
--- | Generalizing 'Const' so we can apply simple 'Applicative'
--- transformations to it and so we can get nicer error messages
---
--- A 'Gettable' 'Functor' ignores its argument, which it carries solely as a
--- phantom type parameter.
---
--- To ensure this, an instance of 'Gettable' is required to satisfy:
---
--- @'id' = 'fmap' f = 'coerce'@
-class Functor f => Gettable f where
-  -- | Replace the phantom type argument.
-  coerce :: f a -> f b
-
-instance Gettable (Const r) where
-  coerce (Const m) = Const m
-
-instance Gettable f => Gettable (Backwards f) where
-  coerce = Backwards . coerce . forwards
-
-instance (Functor f, Gettable g) => Gettable (Compose f g) where
-  coerce = Compose . fmap coerce . getCompose
-
-instance Gettable (Effect m r) where
-  coerce (Effect m) = Effect m
-
-instance Gettable (EffectRWS w st m s) where
-  coerce (EffectRWS m) = EffectRWS m
 
 --instance Gettable (EffectS st m s) where
 --  coerce (EffectS m) = EffectS m
-
-instance Gettable (Accessor r) where
-  coerce (Accessor m) = Accessor m
 
 -- | Used instead of 'Const' to report
 --
@@ -542,26 +389,13 @@ instance Monoid r => Applicative (Accessor r) where
   pure _ = Accessor mempty
   Accessor a <*> Accessor b = Accessor (mappend a b)
 
--- | An 'Effective' 'Functor' ignores its argument and is isomorphic to a monad wrapped around a value.
---
--- That said, the monad is possibly rather unrelated to any 'Applicative' structure.
-class (Monad m, Gettable f) => Effective m r f | f -> m r where
-  effective :: Isomorphic k => k (m r) (f a)
+instance Trustworthy (Accessor r)
 
--- | A convenient antonym that is used internally.
-ineffective :: Effective m r f => Isomorphic k => k (f a) (m r)
-ineffective = from effective
-{-# INLINE ineffective #-}
+instance Gettable (Accessor r) where
+  coerce (Accessor m) = Accessor m
 
 instance Effective Identity r (Accessor r) where
   effective = isomorphic (Accessor . runIdentity) (Identity . runAccessor)
-  {-# INLINE effective #-}
-
-instance Effective m r f => Effective m (Dual r) (Backwards f) where
-  effective = isomorphic (Backwards . effective . liftM getDual) (liftM Dual . ineffective . forwards)
-
-instance Monad m => Effective m r (Effect m r) where
-  effective = isomorphic Effect getEffect
   {-# INLINE effective #-}
 
 -- | A 'Monoid' for a 'Gettable' 'Applicative'.
@@ -573,50 +407,9 @@ instance (Gettable f, Applicative f) => Monoid (Folding f a) where
   Folding fr `mappend` Folding fs = Folding (fr *> fs)
   {-# INLINE mappend #-}
 
--- | The 'mempty' equivalent for a 'Gettable' 'Applicative' 'Functor'.
-noEffect :: (Applicative f, Gettable f) => f a
-noEffect = coerce $ pure ()
-{-# INLINE noEffect #-}
-
 -----------------------------------------------------------------------------
--- Settables & Mutators
+-- Mutators
 -----------------------------------------------------------------------------
-
--- | Anything 'Settable' must be isomorphic to the 'Identity' 'Functor'.
-class Applicative f => Settable f where
-  untainted :: f a -> a
-
-  untainted# :: (a -> f b) -> a -> b
-  untainted# f = untainted . f
-
-  tainted# :: (a -> b) -> a -> f b
-  tainted# f = pure . f
-
--- | so you can pass our a 'Control.Lens.Setter.Setter' into combinators from other lens libraries
-instance Settable Identity where
-  untainted = runIdentity
-  untainted# = unsafeCoerce
-  {-# INLINE untainted #-}
-  tainted# = unsafeCoerce
-  {-# INLINE tainted# #-}
-
--- | 'Control.Lens.Fold.backwards'
-instance Settable f => Settable (Backwards f) where
-  untainted = untainted . forwards
-  -- untainted# = untainted# forwards
-  {-# INLINE untainted #-}
-
-instance (Settable f, Settable g) => Settable (Compose f g) where
-  untainted = untainted . untainted . getCompose
-  -- untainted# = untainted# (untainted# getCompose)
-  {-# INLINE untainted #-}
-
-instance Settable Mutator where
-  untainted = runMutator
-  untainted# = unsafeCoerce
-  {-# INLINE untainted #-}
-  tainted# = unsafeCoerce
-  {-# INLINE tainted# #-}
 
 -- | 'Mutator' is just a renamed 'Identity' functor to give better error
 -- messages when someone attempts to use a getter as a setter.
@@ -630,6 +423,13 @@ instance Functor Mutator where
 instance Applicative Mutator where
   pure = Mutator
   Mutator f <*> Mutator a = Mutator (f a)
+
+instance Settable Mutator where
+  untainted = runMutator
+  untainted# = unsafeCoerce
+  {-# INLINE untainted #-}
+  tainted# = unsafeCoerce
+  {-# INLINE tainted# #-}
 
 -----------------------------------------------------------------------------
 -- Level
@@ -698,7 +498,7 @@ instance Functor Level where
   fmap f (Level n ls a rs) = Level n (f <$> ls) (f a) (f <$> rs)
 
 instance Foldable Level where
-  foldMap f = foldMap f . rezipLevel
+  foldMap f (Level _ ls a rs) = foldMap f (Prelude.reverse ls) <> f a <> foldMap f rs
 
 instance Traversable Level where
   traverse f (Level n ls a rs) = Level n <$> forwards (traverse (Backwards . f) ls) <*> f a <*> traverse f rs
@@ -723,3 +523,27 @@ instance ComonadStore Int Level where
     EQ -> a
     GT -> rs Prelude.!! (n - m)
 
+-- | The result of searching for a particular element in a Traversal.
+data ElementOfResult f a = Searching Int a (Maybe (f a))
+
+instance Functor f => Functor (ElementOfResult f) where
+  fmap f (Searching i a as) = Searching i (f a) (fmap f <$> as)
+
+-- | Searches for a particular element in a Traversal.
+newtype ElementOf f a = ElementOf { getElementOf :: Int -> ElementOfResult f a }
+
+instance Functor f => Functor (ElementOf f) where
+  fmap f (ElementOf m) = ElementOf (fmap f . m)
+
+instance Functor f => Applicative (ElementOf f) where
+  pure a = ElementOf $ \i -> Searching i a Nothing
+  ElementOf mf <*> ElementOf ma = ElementOf $ \i -> case mf i of
+    Searching j f mff -> case ma j of
+      ~(Searching k a maa) -> Searching k (f a) $ fmap ($ a) <$> mff
+                                              <|> fmap f <$> maa
+
+instance Trustworthy f => Trustworthy (ElementOf f)
+
+instance Gettable f => Gettable (ElementOf f) where
+  coerce (ElementOf m) = ElementOf $ \i -> case m i of
+    Searching j _ mas -> Searching j (error "coerced while searching") (coerce <$> mas)

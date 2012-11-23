@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 -------------------------------------------------------------------------------
 -- |
@@ -49,46 +50,35 @@ module Control.Lens.Plated
     Plated(..)
 
   -- * Uniplate Combinators
-  , children, childrenOn
+  , children
   , rewrite, rewriteOf, rewriteOn, rewriteOnOf
   , rewriteM, rewriteMOf, rewriteMOn, rewriteMOnOf
   , universe, universeOf, universeOn, universeOnOf
   , transform, transformOf, transformOn, transformOnOf
   , transformM, transformMOf, transformMOn, transformMOnOf
-  , descend, descendOf, descendOn, descendOnOf
-  , descendA, descendAOf, descendAOn, descendAOnOf
-  , descendA_, descendAOf_, descendAOn_, descendAOnOf_
-  , descendM, descendMOf, descendMOn, descendMOnOf
-  , descendM_, descendMOf_, descendMOn_, descendMOnOf_
   , contexts, contextsOf, contextsOn, contextsOnOf
-  , holes, holesOf, holesOn, holesOnOf
+  , holes, holesOn, holesOnOf
   , para, paraOf
 
   -- * Compos
   -- $compos
   , composOpFold
 
-  -- * Indexing into a Traversal
-  , element
-  , elementOf
-
   -- * Parts
   , parts
-  , partsOf
-
-  -- ** Unsafe Operations
-  , unsafePartsOf
   )
   where
 
 import Control.Applicative
-import Control.Monad.State
 import Control.Lens.Fold
 import Control.Lens.Getter
 import Control.Lens.Internal
 import Control.Lens.Setter
 import Control.Lens.Traversal
 import Control.Lens.Type
+import Data.Data
+import Data.Data.Lens
+import Data.Monoid
 import Data.Tree
 
 -- | A 'Plated' type is one where we know how to extract its immediate self-similar children.
@@ -182,7 +172,8 @@ class Plated a where
   --
   -- The default definition finds no children.
   plate :: Simple Traversal a a
-  plate = ignored
+  default plate :: Data a => Simple Traversal a a
+  plate = uniplate
 
 instance Plated [a] where
   plate f (x:xs) = (x:) <$> f xs
@@ -201,15 +192,6 @@ instance Plated (Tree a) where
 children :: Plated a => a -> [a]
 children = toListOf plate
 {-# INLINE children #-}
-
--- | Provided for compatibility with @uniplate@.
---
--- @'childrenOn' ≡ 'toListOf'@
---
--- @'childrenOn' :: 'Fold' s a -> s -> [a]@
-childrenOn :: Getting [a] s t a b -> s -> [a]
-childrenOn = toListOf
-{-# INLINE childrenOn #-}
 
 -------------------------------------------------------------------------------
 -- Rewriting
@@ -404,201 +386,6 @@ transformMOnOf b l = mapMOf b . transformMOf l
 {-# INLINE transformMOnOf #-}
 
 -------------------------------------------------------------------------------
--- Descent
--------------------------------------------------------------------------------
-
--- | Recurse one level into a structure. (a.k.a @composOp@ from Björn Bringert's @compos@)
---
--- @'descend' ≡ 'over' 'plate'@
-descend :: Plated a => (a -> a) -> a -> a
-descend = over plate
-{-# INLINE descend #-}
-
--- | Recurse one level into a structure using a user specified recursion scheme. This is 'over', but it is supplied here
--- for consistency with the uniplate API.
---
--- @'descendOf' ≡ 'over'@
---
--- @
--- 'descendOf' :: 'Simple' 'Setter' s a -> (a -> a) -> s -> s
--- 'descendOf' :: 'Simple' 'Traversal' s a -> (a -> a) -> s -> s
--- @
-descendOf :: Setting s t a b -> (a -> b) -> s -> t
-descendOf = over
-{-# INLINE descendOf #-}
-
--- | Recurse one level into the parts delimited by one 'Setter', using another.
---
--- @'descendOnOf' b l ≡ 'over' (b '.' l)@
---
--- @
--- 'descendOnOf' :: 'Simple' 'Setter' s a    -> 'Simple' 'Setter' a a    -> (a -> a) -> s -> s
--- 'descendOnOf' :: 'Simple' 'Traversal' s a -> 'Simple' 'Traversal' a a -> (a -> a) -> s -> s
--- @
---
-descendOnOf :: Setting s t a b -> Setting a b u v -> (u -> v) -> s -> t
-descendOnOf b l = over (b.l)
-{-# INLINE descendOnOf #-}
-
--- | Recurse one level into the parts of the structure delimited by a 'Setter'.
---
--- @'descendOn' b ≡ 'over' (b '.' 'plate')@
---
--- @'descendOn' :: 'Plated' a => 'Setter' s t -> (t -> t) -> s -> s@
-descendOn :: Plated a => Setting s t a a -> (a -> a) -> s -> t
-descendOn b = over (b . plate)
-{-# INLINE descendOn #-}
-
--------------------------------------------------------------------------------
--- Applicative Descent
--------------------------------------------------------------------------------
-
--- | Recurse one level into a structure with an 'Applicative' effect, this is 'plate', but it is supplied
--- for consistency with the uniplate API.
---
--- @'descendA' ≡ 'plate'@
-descendA :: (Applicative f, Plated a) => (a -> f a) -> a -> f a
-descendA = plate
-{-# INLINE descendA #-}
-
--- | Recurse one level into a structure using a user specified recursion scheme and 'Applicative' effects. This is 'id', but it is supplied
--- for consistency with the uniplate API.
---
--- @'descendAOf' ≡ 'id'@
---
--- @'descendAOf' :: 'Applicative' m => 'Simple' 'Traversal' s a => (a -> m a) -> s -> m s@
-descendAOf :: Applicative f => LensLike f s t a b -> (a -> f b) -> s -> f t
-descendAOf = id
-{-# INLINE descendAOf #-}
-
--- | Recurse one level into the parts delimited by one 'Traversal', using another with 'Applicative' effects.
---
--- @'descendAOnOf' ≡ ('.')@
---
--- @'descendAOnOf' :: 'Applicative' f => 'Simple' 'Traversal' s a -> 'Simple' 'Traversal' a a -> (a -> f a) -> s -> f s@
-descendAOnOf :: Applicative f => LensLike f u v s t -> LensLike f s t a b -> (a -> f b) -> u -> f v
-descendAOnOf = (.)
-{-# INLINE descendAOnOf #-}
-
--- | Recurse one level into the parts of the structure delimited by a 'Traversal' with 'Applicative' effects.
---
--- @'descendAOn' b ≡ b '.' 'plate'@
---
--- @'descendAOn' :: ('Applicative' f, Plated' a) => 'Simple' 'Traversal' s a -> (a -> f a) -> s -> f s@
-descendAOn :: (Applicative f, Plated a) => LensLike f s t a a -> (a -> f a) -> s -> f t
-descendAOn b = b . plate
-{-# INLINE descendAOn #-}
-
--- |
---
--- @'descendA_' ≡ traverseOf_' 'plate'@
-descendA_ :: (Applicative f, Plated a) => (a -> f b) -> a -> f ()
-descendA_ = traverseOf_ plate
-{-# INLINE descendA_ #-}
-
--- | Recurse one level into a structure using a user specified recursion scheme and 'Applicative' effects, without reconstructing the structure behind you.
---
--- This is just 'traverseOf_', but is provided for consistency.
---
--- @'descendAOf_' ≡ 'traverseOf_'@
---
--- @'descendAOf_' :: 'Applicative' f => 'Fold' s a => (a -> f r) -> s -> f ()@
-descendAOf_ :: Applicative f => Getting (Traversed f) s t a b -> (a -> f r) -> s -> f ()
-descendAOf_ = traverseOf_
-{-# INLINE descendAOf_ #-}
-
--- | Recurse one level into the parts delimited by one 'Fold', using another with 'Applicative' effects, without reconstructing the structure behind you.
---
--- @'descendAOnOf_' b l ≡ 'traverseOf_' (b '.' l)@
---
--- @'descendAOnOf_' :: 'Applicative' f => 'Fold' s a -> 'Fold' a a -> (a -> f r) -> s -> f ()@
-descendAOnOf_ :: Applicative f => Getting (Traversed f) s t a b -> Getting (Traversed f) a b a b -> (a -> f r) -> s -> f ()
-descendAOnOf_ b l = traverseOf_ (b . l)
-{-# INLINE descendAOnOf_ #-}
-
--- | Recurse one level into the parts of the structure delimited by a 'Traversal' with monadic effects.
---
--- @'descendAOn_' b ≡ 'traverseOf_' (b '.' 'plate')@
---
--- @'descendAOn_' :: ('Applicative' f, 'Plated' a) => 'Simple' 'Traversal' s a -> (a -> f r) -> s -> f ()@
-descendAOn_ :: (Applicative f, Plated a) => Getting (Traversed f) s t a a -> (a -> f r) -> s -> f ()
-descendAOn_ b = traverseOf_ (b . plate)
-{-# INLINE descendAOn_ #-}
-
--------------------------------------------------------------------------------
--- Monadic Descent
--------------------------------------------------------------------------------
-
--- | Recurse one level into a structure with a monadic effect. (a.k.a @composOpM@ from Björn Bringert's @compos@)
---
--- @'descendM' ≡ 'mapMOf' 'plate'@
-descendM :: (Monad m, Plated a) => (a -> m a) -> a -> m a
-descendM = mapMOf plate
-{-# INLINE descendM #-}
-
--- | Recurse one level into a structure using a user specified recursion scheme and monadic effects. This is 'id', but it is
--- supplied for consistency with the uniplate API.
---
--- @'descendMOf' ≡ 'mapMOf'@
---
--- @'descendMOf' :: 'Monad' m => 'Simple' 'Traversal' s a => (a -> m a) -> s -> m s@
-descendMOf :: Monad m => LensLike (WrappedMonad m) s t a b -> (a -> m b) -> s -> m t
-descendMOf = mapMOf
-{-# INLINE descendMOf #-}
-
--- | Recurse one level into the parts delimited by one 'Traversal', using another with monadic effects.
---
--- @'descendMOnOf' b l ≡ 'mapMOf' (b '.' l)@
---
--- @'descendMOnOf' :: 'Monad' m => 'Simple' 'Traversal' s a -> 'Simple' 'Traversal' a a -> (a -> m a) -> s -> m s@
-descendMOnOf :: Monad m => LensLike (WrappedMonad m) s t a a -> SimpleLensLike (WrappedMonad m) a a -> (a -> m a) -> s -> m t
-descendMOnOf b l = mapMOf (b . l)
-{-# INLINE descendMOnOf #-}
-
--- | Recurse one level into the parts of the structure delimited by a 'Traversal' with monadic effects.
---
--- @'descendMOn' b ≡ 'mapMOf' (b . 'plate')@
---
--- @'descendMOn' :: ('Monad' m, 'Plated' a) => 'Simple' 'Traversal' s a -> (a -> m a) -> s -> m s@
-descendMOn :: (Monad m, Plated a) => LensLike (WrappedMonad m) s t a a -> (a -> m a) -> s -> m t
-descendMOn b = mapMOf (b . plate)
-{-# INLINE descendMOn #-}
-
--- | Descend one level into a structure with monadic effects (a.k.a @composOpM@ from Björn Bringert's @compos@)
---
--- @'descendM_' ≡ mapMOf_' 'plate'@
-descendM_ :: (Monad m, Plated a) => (a -> m b) -> a -> m ()
-descendM_ = mapMOf_ plate
-{-# INLINE descendM_ #-}
-
--- | Recurse one level into a structure using a user specified recursion scheme and monadic effects. This is just 'mapMOf_', but is provided for consistency.
---
--- @'descendMOf_' ≡ 'mapMOf_'@
---
--- @'descendMOf_' :: 'Monad' m => 'Fold' s a => (a -> m a) -> s -> m ()@
-descendMOf_ :: Monad m => Getting (Sequenced m) s t a b -> (a -> m r) -> s -> m ()
-descendMOf_ = mapMOf_
-{-# INLINE descendMOf_ #-}
-
--- | Recurse one level into the parts delimited by one 'Traversal', using another with monadic effects.
---
--- @'descendMOnOf_' b l ≡ 'mapMOf_' (b '.' l)@
---
--- @'descendMOnOf_' :: 'Monad' m => 'Fold' s a -> 'Fold' a a -> (a -> m a) -> s -> m ()@
-descendMOnOf_ :: Monad m => Getting (Sequenced m) s t a b -> Getting (Sequenced m) a b a b -> (a -> m r) -> s -> m ()
-descendMOnOf_ b l = mapMOf_ (b . l)
-{-# INLINE descendMOnOf_ #-}
-
--- | Recurse one level into the parts of the structure delimited by a 'Traversal' with monadic effects.
---
--- @'descendMOn_' b ≡ 'mapMOf_' (b '.' 'plate')@
---
--- @'descendMOn_' :: ('Monad' m, 'Plated' a) => 'Simple' 'Traversal' s a -> (a -> m r) -> b -> m ()@
-descendMOn_ :: (Monad m, Plated a) => Getting (Sequenced m) s t a a -> (a -> m r) -> s -> m ()
-descendMOn_ b = mapMOf_ (b . plate)
-{-# INLINE descendMOn_ #-}
-
--------------------------------------------------------------------------------
 -- Holes and Contexts
 -------------------------------------------------------------------------------
 
@@ -665,28 +452,6 @@ holes :: Plated a => a -> [Context a a a]
 holes = holesOf plate
 {-# INLINE holes #-}
 
--- | The one-level version of 'contextsOf'. This extracts a list of the immediate children according to a given 'Traversal' as editable contexts.
---
--- Given a context you can use 'pos' to see the values, 'peek' at what the structure would be like with an edited result, or simply 'extract' the original structure.
---
--- @
--- propChildren l x = 'childrenOf' l x '==' 'map' 'pos' ('holesOf' l x)
--- propId l x = 'all' ('==' x) [extract w | w <- 'holesOf' l x]
--- @
---
--- @
--- 'holesOf' :: 'Simple' 'Iso' s a       -> s -> ['Context' a a s]
--- 'holesOf' :: 'Simple' 'Lens' s a      -> s -> ['Context' a a s]
--- 'holesOf' :: 'Simple' 'Traversal' s a -> s -> ['Context' a a s]
--- @
-holesOf :: LensLike (Bazaar a a) s t a a -> s -> [Context a a t]
-holesOf l a = f (ins b) (outs b) where
-  b = l sell a
-  f []     _ = []
-  f (x:xs) g = Context (g . (:xs)) x : f xs (g . (x:))
-{-# INLINE holesOf #-}
-
-
 -- | An alias for 'holesOf', provided for consistency with the other combinators.
 --
 -- @'holesOn' ≡ 'holesOf'@
@@ -720,7 +485,7 @@ holesOnOf b l = holesOf (b.l)
 -- | Perform a fold-like computation on each value, technically a paramorphism.
 --
 -- @'paraOf' :: 'Fold' a a -> (a -> [r] -> r) -> a -> r@
-paraOf :: Getting [a] a b a b -> (a -> [r] -> r) -> a -> r
+paraOf :: Getting (Endo [a]) a b a b -> (a -> [r] -> r) -> a -> r
 paraOf l f = go where
   go a = f a (go <$> toListOf l a)
 {-# INLINE paraOf #-}
@@ -771,85 +536,3 @@ composOpFold z c f = foldrOf plate (c . f) z
 parts :: Plated a => Simple Lens a [a]
 parts = partsOf plate
 {-# INLINE parts #-}
-
--- | 'partsOf' turns a 'Traversal' into a lens that resembles an early version of the @uniplate@ (or @biplate@) type.
---
--- /Note:/ You should really try to maintain the invariant of the number of children in the list.
---
--- Any extras will be lost. If you do not supply enough, then the remainder will come from the original structure.
---
--- So technically, this is only a lens if you do not change the number of results it returns.
---
--- @
--- 'partsOf' :: 'Simple' 'Control.Lens.Iso.Iso' s a       -> 'Simple' 'Lens' s [a]
--- 'partsOf' :: 'Simple' 'Lens' s a      -> 'Simple' 'Lens' s [a]
--- 'partsOf' :: 'Simple' 'Traversal' s a -> 'Simple' 'Lens' s [a]
--- @
-partsOf :: LensLike (Bazaar a a) s t a a -> Lens s t [a] [a]
-partsOf l f a = outs b <$> f (ins b) where b = l sell a
-{-# INLINE partsOf #-}
-
--- | 'unsafePartsOf' turns a 'Traversal' into a @uniplate@ (or @biplate@) family.
---
--- If you do not need the types of @s@ and @t@ to be different, it is recommended that
--- you use 'partsOf'
---
--- It is generally safer to traverse with the 'Bazaar' rather than use this
--- combinator. However, it is sometimes convenient.
---
--- This is unsafe because if you don't supply at least as many @b@'s as you were
--- given @a@'s, then the reconstruction of @t@ /will/ result in an error!
---
--- @
--- 'unsafePartsOf' :: 'Control.Lens.Iso.Iso' s t a b       -> 'Lens' s t [a] [b]
--- 'unsafePartsOf' :: 'Lens' s t a b      -> 'Lens' s t [a] [b]
--- 'unsafePartsOf' :: 'Traversal' s t a b -> 'Lens' s t [a] [b]
--- @
-unsafePartsOf :: LensLike (Bazaar a b) s t a b -> Lens s t [a] [b]
-unsafePartsOf l f a = unsafeOuts b <$> f (ins b) where b = l sell a
-{-# INLINE unsafePartsOf #-}
-
-------------------------------------------------------------------------------
--- Common Lenses
-------------------------------------------------------------------------------
-
--- | A 'Lens' to 'Control.Lens.Getter.view'/'Control.Lens.Setter.set' the nth element 'elementOf' a 'Traversal', 'Lens' or 'Control.Lens.Iso.Iso'.
---
--- Attempts to access beyond the range of the 'Traversal' will cause an error.
---
--- >>> [[1],[3,4]]^.elementOf (traverse.traverse) 1
--- 3
-elementOf :: Functor f => LensLike (Bazaar a a) s t a a -> Int -> LensLike f s t a a
-elementOf l k f s = case holesOf l s !! k of
-  Context g a -> g <$> f a
-
--- | Access the /nth/ element of a 'Traversable' container.
---
--- Attempts to access beyond the range of the 'Traversal' will cause an error.
---
--- @'element' ≡ 'elementOf' 'traverse'@
-element :: Traversable t => Int -> Simple Lens (t a) a
-element = elementOf traverse
-
--------------------------------------------------------------------------------
--- Misc.
--------------------------------------------------------------------------------
-
-ins :: Bazaar a b t -> [a]
-ins (Bazaar m) = getConst (m (Const . return))
-{-# INLINE ins #-}
-
-unsafeUncons :: [a] -> (a,[a])
-unsafeUncons ~(a:as) = (a,as)
-{-# INLINE unsafeUncons #-}
-
-outs :: Bazaar a a t -> [a] -> t
-outs (Bazaar m) = evalState $ m $ \c -> state $ \cs -> case cs of
-  [] -> (c,[])
-  (d:ds) -> (d,ds)
-{-# INLINE outs #-}
-
-unsafeOuts :: Bazaar a b t -> [b] -> t
-unsafeOuts (Bazaar m) = evalState (m $ \_ -> state unsafeUncons)
-{-# INLINE unsafeOuts #-}
-

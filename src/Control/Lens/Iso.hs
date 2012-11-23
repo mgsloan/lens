@@ -14,12 +14,14 @@ module Control.Lens.Iso
   (
   -- * Isomorphism Lenses
     Iso
-  , (:<->)
   , iso
   , isos
+  -- * Working with isomorphisms
   , ala
   , auf
   , under
+  , mapping
+  , review
   -- * Primitive isomorphisms
   , from
   , via
@@ -29,6 +31,8 @@ module Control.Lens.Iso
   , _const
   , identity
   , simple
+  , non
+  , enum
   -- * Storing Isomorphisms
   , ReifiedIso(..)
   -- * Simplicity
@@ -44,12 +48,12 @@ import Control.Lens.Isomorphic
 import Control.Lens.Setter
 import Control.Lens.Type
 import Data.Functor.Identity
+import Data.Maybe (fromMaybe)
 import Prelude hiding ((.),id)
 
 -- $setup
 -- >>> import Control.Lens
-
-infixr 0 :<->
+-- >>> import Data.Map as Map
 
 -----------------------------------------------------------------------------
 -- Isomorphisms families as Lenses
@@ -72,8 +76,6 @@ type Iso s t a b = forall k f. (Isomorphic k, Functor f) => k (a -> f b) (s -> f
 -- @type 'SimpleIso' = 'Control.Lens.Type.Simple' 'Iso'@
 type SimpleIso s a = Iso s s a a
 
--- | This is a commonly-used infix alias for a @'Control.Lens.Type.Simple' 'Iso'@
-type s :<-> a = Iso s s a a
 
 -- | Build an isomorphism family from two pairs of inverse functions
 --
@@ -81,8 +83,7 @@ type s :<-> a = Iso s s a a
 -- 'view' ('isos' sa as tb bt) ≡ sa
 -- 'view' ('from' ('isos' sa as tb bt)) ≡ as
 -- 'set' ('isos' sa as tb bt) ab ≡ bt '.' ab '.' sa
--- 'set' ('from' ('isos' ac ca bd db')) ab ≡ bd '.' ab '.' ca
--- 'set' ('from' ('isos' sa as tb bt')) s t ≡ tb '.' st '.' as
+-- 'set' ('from' ('isos' ac ca bd db)) ab ≡ bd '.' ab '.' ca
 -- @
 --
 -- @isos :: (s -> a) -> (a -> s) -> (t -> b) -> (b -> t) -> 'Iso' s t a b@
@@ -98,8 +99,8 @@ isos sa as tb bt = isomorphic
 -- @
 -- 'view' ('iso' f g) ≡ f
 -- 'view' ('from' ('iso' f g)) ≡ g
--- 'set' ('isos' f g) h ≡ g '.' h '.' f
--- 'set' ('from' ('iso' f g')) h ≡ f '.' h '.' g
+-- 'set' ('iso' f g) h ≡ g '.' h '.' f
+-- 'set' ('from' ('iso' f g)) h ≡ f '.' h '.' g
 -- @
 --
 -- @iso :: (s -> a) -> (a -> s) -> 'Control.Lens.Type.Simple' 'Iso' s a@
@@ -134,6 +135,13 @@ under :: Isomorphism (a -> Mutator b) (s -> Mutator t) -> (s -> t) -> a -> b
 under = over . from
 {-# INLINE under #-}
 
+-- | This can be used to turn an 'Iso' around and 'view' the other way.
+--
+-- @'review' = 'view' '.' 'from'@
+review :: Overloaded Isomorphism (Accessor s) s t a b -> a -> s
+review (Isomorphism _ l) = view l
+{-# INLINE review #-}
+
 -----------------------------------------------------------------------------
 -- Isomorphisms
 -----------------------------------------------------------------------------
@@ -158,13 +166,72 @@ _const :: Iso a b (Const a c) (Const b d)
 _const = isos Const getConst Const getConst
 {-# INLINE _const #-}
 
+-- | This isomorphism can be used to convert to or from an instance of 'Enum'.
+--
+-- >>> LT^.from enum
+-- 0
+--
+-- >>> 97^.enum :: Char
+-- 'a'
+--
+-- Note: this is only an isomorphism from the numeric range actually used
+-- and it is a bit of a pleasant fiction, since there are questionable
+-- 'Enum' instances for 'Double', and 'Float' that exist solely for
+-- @[1.0 .. 4.0]@ sugar and the instances for those and 'Integer' don't
+-- cover all values in their range.
+enum :: Enum a => Simple Iso Int a
+enum = iso toEnum fromEnum
+{-# INLINE enum #-}
+
+-- | This can be used to lift any 'SimpleIso' into an arbitrary functor.
+mapping :: Functor f => SimpleIso s a -> SimpleIso (f s) (f a)
+mapping l = iso (view l <$>) (view (from l) <$>)
+{-# INLINE mapping #-}
 
 -- | Composition with this isomorphism is occasionally useful when your 'Lens',
 -- 'Control.Lens.Traversal.Traversal' or 'Iso' has a constraint on an unused
 -- argument to force that argument to agree with the
 -- type of a used argument and avoid @ScopedTypeVariables@ or other ugliness.
-simple :: Iso a b a b
-simple = isos id id id id
+simple :: Simple Iso a a
+simple = isomorphic id id
+{-# INLINE simple #-}
+
+-- | If @v@ is an element of a type @a@, and @a'@ is @a@ sans the element @v@, then @non v@ is an isomorphism from
+-- @Maybe a'@ to @a@.
+--
+-- Keep in mind this is only a real isomorphism if you treat the domain as being @'Maybe' (a sans v)@
+--
+-- This is practically quite useful when you want to have a map where all the entries should have non-zero values.
+--
+-- >>> Map.fromList [("hello",1)] & at "hello" . non 0 +~ 2
+-- fromList [("hello",3)]
+--
+-- >>> Map.fromList [("hello",1)] & at "hello" . non 0 -~ 1
+-- fromList []
+--
+-- >>> Map.fromList [("hello",1)] ^. at "hello" . non 0
+-- 1
+--
+-- >>> Map.fromList [] ^. at "hello" . non 0
+-- 0
+--
+-- This combinator is also particularly useful when working with nested maps.
+--
+-- /e.g./ When you want to create the nested map when it is missing:
+--
+-- >>> Map.empty & at "hello" . non Map.empty . at "world" ?~ "!!!"
+-- fromList [("hello",fromList [("world","!!!")])]
+--
+-- and when have deleting the last entry from the nested map mean that we 
+-- should delete its entry from the surrounding one:
+--
+-- >>> fromList [("hello",fromList [("world","!!!")])] & at "hello" . non Map.empty . at "world" .~ Nothing
+-- fromList []
+
+non :: Eq a => a -> Simple Iso (Maybe a) a
+non a = iso (fromMaybe a) go where
+  go b | a == b    = Nothing
+       | otherwise = Just b
 
 -----------------------------------------------------------------------------
 -- Reifying Isomorphisms

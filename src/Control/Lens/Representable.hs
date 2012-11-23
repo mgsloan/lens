@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 -----------------------------------------------------------------------------
@@ -85,14 +86,17 @@ module Control.Lens.Representable
   ) where
 
 import Control.Applicative
-import Control.Lens.Iso
-import Control.Lens.Type
+import Control.Lens.Classes
 import Control.Lens.Getter
 import Control.Lens.Indexed
-import Control.Lens.IndexedSetter
 import Control.Lens.IndexedFold
+import Control.Lens.IndexedLens
+import Control.Lens.IndexedSetter
 import Control.Lens.IndexedTraversal
 import Control.Lens.Internal
+import Control.Lens.Internal.Combinators
+import Control.Lens.Iso
+import Control.Lens.Type
 import Data.Foldable         as Foldable
 import Data.Functor.Identity
 import Data.Monoid
@@ -299,12 +303,12 @@ rfoldr f b m = Foldable.foldr id b (rmap f m)
 
 -- | An 'IndexedSetter' that walks an 'Representable' 'Functor' using a 'Path' for an index.
 rmapped :: Representable f => IndexedSetter (Path f) (f a) (f b) a b
-rmapped = index $ \f -> pure . rmap (\i -> untainted . f (Path i))
+rmapped = index $ \f -> tainted# (rmap (\i -> untainted# (f (Path i))))
 {-# INLINE rmapped #-}
 
 -- | An 'IndexedFold' that walks an 'Foldable' 'Representable' 'Functor' using a 'Path' for an index.
 rfolded :: (Representable f, Foldable f) => IndexedFold (Path f) (f a) a
-rfolded = index $ \f -> coerce . getFolding . rfoldMap (\i -> Folding . f (Path i))
+rfolded = index $ \f -> coerce . getFolding . rfoldMap (\i -> folding# (f (Path i)))
 {-# INLINE rfolded #-}
 
 -- | An 'IndexedTraversal' for a 'Traversable' 'Representable' 'Functor'.

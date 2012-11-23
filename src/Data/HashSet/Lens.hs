@@ -1,4 +1,8 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE Rank2Types #-}
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
+{-# LANGUAGE Trustworthy #-}
+#endif
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Data.HashSet.Lens
@@ -15,7 +19,6 @@ module Data.HashSet.Lens
   ) where
 
 import Control.Lens.Getter
-import Control.Lens.Internal
 import Control.Lens.Setter
 import Data.HashSet as HashSet
 import Data.Hashable
@@ -48,5 +51,5 @@ setmapped = sets HashSet.map
 -- 'setOf' :: ('Eq' a, 'Hashable' a) => 'Control.Lens.Type.Simple' 'Control.Lens.Traversal.Traversal' s a -> s -> 'HashSet' a
 -- @
 setOf :: Hashable a => Getting (HashSet a) s t a b -> s -> HashSet a
-setOf l = runAccessor . l (Accessor . HashSet.singleton)
+setOf l = views l HashSet.singleton
 {-# INLINE setOf #-}

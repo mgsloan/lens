@@ -1,14 +1,16 @@
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ > 704
-{-# LANGUAGE Trustworthy #-}
-#endif
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ > 706
 {-# LANGUAGE DefaultSignatures #-}
 #define MPTC_DEFAULTS
+#endif
+
+#ifndef MIN_VERSION_containers
+#define MIN_VERSION_containers(x,y,z) 1
 #endif
 -------------------------------------------------------------------------------
 -- |
@@ -61,8 +63,10 @@ import Control.Applicative
 import Control.Applicative.Backwards
 import Control.Monad (void, liftM)
 import Control.Monad.Trans.State.Lazy as Lazy
+import Control.Lens.Classes
 import Control.Lens.Fold
 import Control.Lens.Internal
+import Control.Lens.Internal.Combinators
 import Control.Lens.Indexed
 import Control.Lens.IndexedSetter
 import Control.Lens.IndexedFold
@@ -75,6 +79,8 @@ import Data.Map as Map
 import Data.Monoid
 import Data.Sequence hiding (index)
 import Data.Traversable
+import Data.Vector (Vector)
+import qualified Data.Vector as V
 
 -- $setup
 -- >>> import Control.Lens
@@ -132,7 +138,7 @@ class Foldable f => FoldableWithIndex i f | f -> i where
   --
   -- @'Data.Foldable.foldr' ≡ 'ifoldr' '.' 'const'@
   ifoldr   :: (i -> a -> b -> b) -> b -> f a -> b
-  ifoldr f z t = appEndo (ifoldMap (\i -> Endo . f i) t) z
+  ifoldr f z t = appEndo (ifoldMap (\i -> endo# (f i)) t) z
 
   -- |
   -- Left-associative fold of an indexed container with access to the index @i@.
@@ -141,7 +147,7 @@ class Foldable f => FoldableWithIndex i f | f -> i where
   --
   -- @'foldl' ≡ 'ifoldl' '.' 'const'@
   ifoldl :: (i -> b -> a -> b) -> b -> f a -> b
-  ifoldl f z t = appEndo (getDual (ifoldMap (\i -> Dual . Endo . flip (f i)) t)) z
+  ifoldl f z t = appEndo (getDual (ifoldMap (\i -> dual# (endo# (flip (f i)))) t)) z
 
   -- | /Strictly/ fold right over the elements of a structure with access to the index @i@.
   --
@@ -170,7 +176,7 @@ class Foldable f => FoldableWithIndex i f | f -> i where
 
 -- | The 'IndexedFold' of a 'FoldableWithIndex' container.
 ifolded :: FoldableWithIndex i f => IndexedFold i (f a) a
-ifolded = index $ \ f -> coerce . getFolding . ifoldMap (\i -> Folding . f i)
+ifolded = index $ \ f -> coerce . getFolding . ifoldMap (\i -> folding# (f i))
 {-# INLINE ifolded #-}
 
 -- | Obtain a 'Fold' by lifting an operation that returns a foldable result.
@@ -187,7 +193,7 @@ ifolding afc = index $ \ icgd -> coerce . itraverse_ icgd . afc
 --
 -- @'any' = 'iany' '.' 'const'@
 iany :: FoldableWithIndex i f => (i -> a -> Bool) -> f a -> Bool
-iany f = getAny . ifoldMap (\i -> Any . f i)
+iany f = getAny# (ifoldMap (\i -> any# (f i)))
 {-# INLINE iany #-}
 
 -- |
@@ -197,7 +203,7 @@ iany f = getAny . ifoldMap (\i -> Any . f i)
 --
 -- @'all' ≡ 'iall' '.' 'const'@
 iall :: FoldableWithIndex i f => (i -> a -> Bool) -> f a -> Bool
-iall f = getAll . ifoldMap (\i -> All . f i)
+iall f = getAll# (ifoldMap (\i -> all# (f i)))
 {-# INLINE iall #-}
 
 -- |
@@ -207,7 +213,7 @@ iall f = getAll . ifoldMap (\i -> All . f i)
 --
 -- @'traverse_' l = 'itraverse' '.' 'const'@
 itraverse_ :: (FoldableWithIndex i t, Applicative f) => (i -> a -> f b) -> t a -> f ()
-itraverse_ f = getTraversed . ifoldMap (\i -> Traversed . void . f i)
+itraverse_ f = getTraversed# (ifoldMap (\i -> traversed# (void . f i)))
 {-# INLINE itraverse_ #-}
 
 -- |
@@ -230,7 +236,7 @@ ifor_ = flip itraverse_
 --
 -- @'mapM_' ≡ 'imapM' '.' 'const'@
 imapM_ :: (FoldableWithIndex i t, Monad m) => (i -> a -> m b) -> t a -> m ()
-imapM_ f = getSequenced . ifoldMap (\i -> Sequenced . liftM skip . f i)
+imapM_ f = getSequenced# (ifoldMap (\i -> sequenced# (liftM skip . f i)))
 {-# INLINE imapM_ #-}
 
 -- |
@@ -312,7 +318,7 @@ withIndices f = coerce . getFolding . ifoldMap (\i a -> Folding (f (i,a)))
 
 -- | Fold a container with indices returning only the indices.
 indices :: FoldableWithIndex i f => Fold (f a) i
-indices f = coerce . getFolding . ifoldMap (const . Folding . f)
+indices f = coerce . getFolding# (ifoldMap (const . folding# f))
 {-# INLINE indices #-}
 
 -------------------------------------------------------------------------------
@@ -360,7 +366,7 @@ ifor = flip itraverse
 --
 -- @'mapM' ≡ 'imapM' '.' 'const'@
 imapM :: (TraversableWithIndex i t, Monad m) => (i -> a -> m b) -> t a -> m (t b)
-imapM f = unwrapMonad . itraverse (\i -> WrapMonad . f i)
+imapM f = unwrapMonad# (itraverse (\i -> wrapMonad# (f i)))
 {-# INLINE imapM #-}
 
 -- | Map each element of a structure to a monadic action,
@@ -421,12 +427,27 @@ instance FoldableWithIndex Int Seq where
 instance TraversableWithIndex Int Seq where
   itraverse = withIndex (indexed traverse)
 
+instance FunctorWithIndex Int Vector where
+  imap = V.imap
+instance FoldableWithIndex Int Vector where
+  ifoldMap = ifoldMapOf itraversed
+  ifoldr = V.ifoldr
+  ifoldl = V.ifoldl . flip
+  ifoldr' = V.ifoldr'
+  ifoldl' = V.ifoldl' . flip
+instance TraversableWithIndex Int Vector where
+  itraverse f = sequenceA . V.imap f
+
 instance FunctorWithIndex Int IntMap where
   imap = imapOf itraversed
 instance FoldableWithIndex Int IntMap where
   ifoldMap = ifoldMapOf itraversed
 instance TraversableWithIndex Int IntMap where
+#if MIN_VERSION_containers(0,5,0)
+  itraverse = IntMap.traverseWithKey
+#else
   itraverse f = sequenceA . IntMap.mapWithKey f
+#endif
   {-# INLINE itraverse #-}
 
 instance Ord k => FunctorWithIndex k (Map k) where
@@ -434,7 +455,11 @@ instance Ord k => FunctorWithIndex k (Map k) where
 instance Ord k => FoldableWithIndex k (Map k) where
   ifoldMap = ifoldMapOf itraversed
 instance Ord k => TraversableWithIndex k (Map k) where
+#if MIN_VERSION_containers(0,5,0)
+  itraverse = Map.traverseWithKey
+#else
   itraverse f = sequenceA . Map.mapWithKey f
+#endif
   {-# INLINE itraverse #-}
 
 instance (Eq k, Hashable k) => FunctorWithIndex k (HashMap k) where

@@ -52,13 +52,13 @@ module Control.Lens.Getter
   , to
   -- * Combinators for Getters and Folds
   , (^.), (^$)
-  , (%), (^%)
+  , (&), (^&)
   , view
   , views
   , use
   , uses
-  , query
-  , queries
+  , peruse
+  , peruses
 
   -- * Storing Getters
   , ReifiedGetter(..)
@@ -66,15 +66,17 @@ module Control.Lens.Getter
   , Accessor
   ) where
 
+import Control.Lens.Classes
 import Control.Lens.Internal
+import Control.Lens.Internal.Combinators
 import Control.Monad.Reader.Class       as Reader
 import Control.Monad.State.Class        as State
 
 -- $setup
 -- >>> import Control.Lens
 
-infixl 8 ^., ^%
-infixl 1 %
+infixl 8 ^., ^&
+infixl 1 &
 infixr 0 ^$
 
 -------------------------------------------------------------------------------
@@ -87,21 +89,21 @@ infixr 0 ^$
 -- for inference. Here it is supplied for notational convenience and given a precedence that allows it
 -- to be nested inside uses of ('$').
 --
--- >>> "hello" % length % succ
+-- >>> "hello" & length & succ
 -- 6
-(%) :: a -> (a -> b) -> b
-a % f = f a
-{-# INLINE (%) #-}
+(&) :: a -> (a -> b) -> b
+a & f = f a
+{-# INLINE (&) #-}
 
--- | A version of ('Control.Lens.Combinators.%') with much tighter precedence that can be interleaved with ('^.')
+-- | A version of ('&') with much tighter precedence that can be interleaved with ('^.')
 --
--- >>> "hello"^%length
+-- >>> "hello" ^& length
 -- 5
 -- >>> import Data.List.Lens
--- >>> ("hello","world")^._1^%reverse^._head
+-- >>> ("hello","world")^._1^&reverse^!?_head
 -- 'o'
-(^%) :: a -> (a -> b) -> b
-a ^% f = f a
+(^&) :: a -> (a -> b) -> b
+a ^& f = f a
 
 -------------------------------------------------------------------------------
 -- Getters
@@ -310,15 +312,15 @@ uses l f = State.gets (views l f)
 -- to a monoidal value.
 --
 -- @
--- 'query' :: 'MonadReader' s m             => 'Getter' s a           -> m a
--- 'query' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Fold.Fold' s a             -> m a
--- 'query' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Iso.Iso' s a       -> m a
--- 'query' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Type.Lens' s a      -> m a
--- 'query' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Type.Simple' 'Control.Lens.Traversal.Traversal' s a -> m a
+-- 'peruse' :: 'MonadReader' s m             => 'Getter' s a           -> m a
+-- 'peruse' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Fold.Fold' s a             -> m a
+-- 'peruse' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Iso.Iso' s a       -> m a
+-- 'peruse' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Type.Lens' s a      -> m a
+-- 'peruse' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Type.Simple' 'Control.Lens.Traversal.Traversal' s a -> m a
 -- @
-query :: MonadReader s m => Getting a s t a b -> m a
-query l = Reader.asks (^.l)
-{-# INLINE query #-}
+peruse :: MonadReader s m => Getting a s t a b -> m a
+peruse l = Reader.asks (^.l)
+{-# INLINE peruse #-}
 
 -- |
 -- Use the target of a 'Control.Lens.Type.Lens', 'Control.Lens.Iso.Iso' or
@@ -327,15 +329,15 @@ query l = Reader.asks (^.l)
 -- to a monoidal value.
 --
 -- @
--- 'queries' :: 'MonadReader' s m             => 'Getter' s a           -> (a -> r) -> m r
--- 'queries' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Fold.Fold' s a             -> (a -> r) -> m r
--- 'queries' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Iso.Iso' s a       -> (a -> r) -> m r
--- 'queries' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Type.Lens' s a      -> (a -> r) -> m r
--- 'queries' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Type.Simple' 'Control.Lens.Traversal.Traversal' s a -> (a -> r) -> m r
+-- 'peruses' :: 'MonadReader' s m             => 'Getter' s a           -> (a -> r) -> m r
+-- 'peruses' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Fold.Fold' s a             -> (a -> r) -> m r
+-- 'peruses' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Iso.Iso' s a       -> (a -> r) -> m r
+-- 'peruses' :: 'MonadReader' s m             => 'Control.Lens.Type.Simple' 'Control.Lens.Type.Lens' s a      -> (a -> r) -> m r
+-- 'peruses' :: ('MonadReader' s m, 'Monoid' a) => 'Control.Lens.Type.Simple' 'Control.Lens.Traversal.Traversal' s a -> (a -> r) -> m r
 -- @
-queries :: MonadReader s m => Getting r s t a b -> (a -> r) -> m r
-queries l f = Reader.asks (views l f)
-{-# INLINE queries #-}
+peruses :: MonadReader s m => Getting r s t a b -> (a -> r) -> m r
+peruses l f = Reader.asks (views l f)
+{-# INLINE peruses #-}
 
 -- | Useful for storing getters in containers.
 newtype ReifiedGetter s a = ReifyGetter { reflectGetter :: Getter s a }

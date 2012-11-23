@@ -3,6 +3,9 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE LiberalTypeSynonyms #-}
 {-# LANGUAGE FlexibleContexts #-}
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
+{-# LANGUAGE Trustworthy #-}
+#endif
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Control.Lens
@@ -41,7 +44,7 @@
 --
 -- <http://github.com/ekmett/lens/wiki>
 --
--- <<http://github.com/ekmett/lens/wiki/images/Hierarchy-3.3.png>>
+-- <<http://github.com/ekmett/lens/wiki/images/Hierarchy-3.5.png>>
 ----------------------------------------------------------------------------
 module Control.Lens
   ( module Control.Lens.Type

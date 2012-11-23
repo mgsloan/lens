@@ -1,6 +1,50 @@
+3.5.1
+-----
+* Improved SafeHaskell inference.
+
+3.5
+---
+* Fixed a potential SafeHaskell issue where a user could use `undefined` to derive `unsafeCoerce`. You now have to import an explicitly
+  Unsafe module and create an instance of `Trustworthy` for your type to cause this behavior, so if you do, its on your head, not mine. :)
+* Renamed `EvilBazaar` to `BazaarT`.
+* Moved a lot of internals around. Most notably, `Gettable`, `Settable` and `Effective` have moved to `Control.Lens.Classes`.
+* Exposed `partsOf'` and `unsafePartsOf'` in `Control.Lens.Traversal` to reduce reliance on `BazaarT` in `Control.Lens.Zipper`
+
+3.4
+---
+* Renamed `(%)` to `(&)` and `(^%)` to `(^&)`. This avoids the conflict with `Data.Ratio`, which was our highest priority conflict with a third party library.
+* Switched to a more liberal type for `ignored`
+* Removed some "`isplitting`" bad combinators from `Control.Lens.IndexedFold`.
+* Made `indexed`, `taking`, and `dropping` and `elementOf` lazier and capable of dealing with infinite traversals and infinite folds.
+* Improved `Indexing` to support infinite traversals and folds.
+* Removed some of the more redundant combinators from `Control.Lens.Plated`, which already had existing aliases in the rest of the traversal API.
+* Moved `partsOf`, `holesOf`, and `elementOf` into `Control.Lens.Traversal`.
+* Renamed `query` to `peruse` and `queries` to `peruses`. These are much less contentious names,
+  both contain `use` in their name for analogy to `use` and `uses` and the word is about reading.
+* Simpler `simple`.
+* Added `enum` and `non` to `Control.Lens.Iso`.
+* Added `(^?!)` to `Control.Lens.Fold` for unsafe access to the head of a `Fold`.
+* Changed `_head`, `_tail`, `_init` and `_last` to traversals in `Data.List.Lens` and `Data.Sequence.Lens`.
+* Eliminated `traverseHead`, `traverseTail`, `traverseInit` and `traverseLast`.
+* `partsOf` and `unsafePartsOf` can now also be applied to a `Fold` yielding a `Getter` or to a `MonadicFold` yielding an `Action`.
+
 3.3
 ---
 * Redefined `simple` and moved it to `Control.Lens.Iso`. Instead of using `simple l` you can now compose `l.simple` or `simple.l` providing more nuanced control and a more compositional API.
+* Moved the various `foo#` combinators used to emit cleaner core into an unexported module, `Control.Lens.Unsafe`. This removes `MagicHash` from the public API.
+* Removed the `bazaar#` and `runBazaar#` coercions that caused issues on GHC HEAD.
+* Changed the default definition of `plate` to `uniplate` from `ignored`.
+* Added `Data.Vector.Lens` and instances for `Data.Vector`.
+* Added support for the `split` package, which is now part of the Haskell platform.
+* Removed redundant `Data.List.traverseList`. Use `itraversed` or `traverse` instead.
+* Moved `(:<->)` to `Control.Lens.Simple`.
+* Fixed a bug in `Control.Lens.TH` that was causing `makeIso` not to work.
+* Added `lifted` to `Control.Lens.Setter` for mapping over monads.
+* Added `beside` to `Control.Lens.Traversal`.
+* Removed the operators from `Data.List.Lens`, they broke the overall pattern of the rest of the API, and were terrible clutter.
+* Fixed a bug that caused `resultAt` to give wrong answers most of the time.
+* Changed `resultAt` to an `IndexedLens` and moved it to `Control.Lens.IndexedLens`
+* Changed `ignored` to an `IndexedTraversal` and moved it to `Control.Lens.IndexedTraversal`
 
 3.2
 ---

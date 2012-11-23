@@ -38,7 +38,9 @@ module Control.Lens.Fold
   (
   -- * Folds
     Fold
-  , (^?), (^..)
+  , (^..)
+  , (^?)
+  , (^?!), (^!?)
   -- ** Building Folds
   --, folds
   , folding
@@ -79,8 +81,10 @@ module Control.Lens.Fold
 
 import Control.Applicative as Applicative
 import Control.Applicative.Backwards
+import Control.Lens.Classes
 import Control.Lens.Getter
 import Control.Lens.Internal
+import Control.Lens.Internal.Combinators
 import Control.Lens.Type
 import Control.Monad
 import Data.Foldable as Foldable
@@ -90,7 +94,7 @@ import Data.Monoid
 -- $setup
 -- >>> import Control.Lens
 
-infixl 8 ^?, ^..
+infixl 8 ^.., ^?, ^?!, ^!?
 
 --------------------------
 -- Folds
@@ -129,6 +133,7 @@ folded f = coerce . getFolding . foldMap (folding# f)
 -- @'repeat' ≡ 'toListOf' 'repeated'@
 repeated :: Fold a a
 repeated f a = as where as = f a *> as
+{-# INLINE repeated #-}
 
 -- | A fold that replicates its input @n@ times.
 --
@@ -146,6 +151,7 @@ replicated n0 f a = go n0 where
 -- [1,2,3,1,2,3]
 cycled :: (Applicative f, Gettable f) => LensLike f s t a b -> LensLike f s t a b
 cycled l f a = as where as = l f a *> as
+{-# INLINE cycled #-}
 
 -- | Build a fold that unfolds its values from a seed.
 --
@@ -183,8 +189,8 @@ filtered p f a
 {-# INLINE filtered #-}
 
 -- | This allows you to traverse the elements of a 'Control.Lens.Traversal.Traversal' or 'Fold' in the opposite order.
--- This will demote an 'Control.Lens.IndexedTraversal.IndexedTraversal' or 'Control.Lens.IndexedFold.IndexedFold' to a regular 'Control.Lens.Traversal.Traversal' or 'Fold';
--- to preserve the indices, use 'Control.Lens.IndexedFold.ibackwards' instead.
+-- This will demote an 'Control.Lens.IndexedTraversal.IndexedTraversal' or 'Control.Lens.IndexedFold.IndexedFold' to a regular 'Control.Lens.Traversal.Traversal' or 'Fold',
+-- repectively; to preserve the indices, use 'Control.Lens.IndexedFold.ibackwards' instead.
 --
 -- Note: 'backwards' should have no impact on a 'Getter', 'Control.Lens.Setter.Setter', 'Lens' or 'Control.Lens.Iso.Iso'.
 --
@@ -308,8 +314,9 @@ foldlOf l f z t = appEndo (getDual (foldMapOf l (dual# (endo# (flip f))) t)) z
 -- 'toListOf' :: 'Simple' 'Control.Lens.Iso.Iso' s a       -> s -> [a]
 -- 'toListOf' :: 'Simple' 'Control.Lens.Traversal.Traversal' s a -> s -> [a]
 -- @
-toListOf :: Getting [a] s t a b -> s -> [a]
-toListOf l = foldMapOf l return
+toListOf :: Getting (Endo [a]) s t a b -> s -> [a]
+toListOf l = foldrOf l (:) []
+-- toListOf l = foldMapOf l return
 {-# INLINE toListOf #-}
 
 -- |
@@ -336,6 +343,7 @@ toListOf l = foldMapOf l return
 -- @
 (^..) :: s -> Getting [a] s t a b -> [a]
 s ^.. l = foldMapOf l return s
+{-# INLINE (^..) #-}
 
 -- | Returns 'True' if every target of a 'Fold' is 'True'.
 --
@@ -739,6 +747,34 @@ headOf l = getFirst# (foldMapOf l (first# Just))
 (^?) :: s -> Getting (First a) s t a b -> Maybe a
 a ^? l = getFirst (foldMapOf l (first# Just) a)
 {-# INLINE (^?) #-}
+
+-- | Perform an *UNSAFE* 'head' of a 'Fold' or 'Control.Lens.Traversal.Traversal' assuming that it is there.
+--
+-- @
+-- ('^?!') :: s -> 'Getter' s a           -> a
+-- ('^?!') :: s -> 'Fold' s a             -> a
+-- ('^?!') :: s -> 'Simple' 'Lens' s a      -> a
+-- ('^?!') :: s -> 'Simple' 'Control.Lens.Iso.Iso' s a       -> a
+-- ('^?!') :: s -> 'Simple' 'Control.Lens.Traversal.Traversal' s a -> a
+-- @
+(^?!) :: s -> Getting (First a) s t a b -> a
+a ^?! l = fromMaybe (error "(^?!): empty Fold") $ getFirst (foldMapOf l (first# Just) a)
+{-# INLINE (^?!) #-}
+
+-- | Perform an *UNSAFE* 'head' of a 'Fold' or 'Control.Lens.Traversal.Traversal' assuming that it is there.
+--
+-- This is an alias for ('^?!').
+--
+-- @
+-- ('^!?') :: s -> 'Getter' s a           -> a
+-- ('^!?') :: s -> 'Fold' s a             -> a
+-- ('^!?') :: s -> 'Simple' 'Lens' s a      -> a
+-- ('^!?') :: s -> 'Simple' 'Control.Lens.Iso.Iso' s a       -> a
+-- ('^!?') :: s -> 'Simple' 'Control.Lens.Traversal.Traversal' s a -> a
+-- @
+(^!?) :: s -> Getting (First a) s t a b -> a
+a ^!? l = fromMaybe (error "(^!?): empty Fold") $ getFirst (foldMapOf l (first# Just) a)
+{-# INLINE (^!?) #-}
 
 -- | Perform a safe 'last' of a 'Fold' or 'Control.Lens.Traversal.Traversal' or retrieve 'Just' the result
 -- from a 'Getter' or 'Lens'.
