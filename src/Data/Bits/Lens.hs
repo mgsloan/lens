@@ -12,125 +12,140 @@
 --
 ----------------------------------------------------------------------------
 module Data.Bits.Lens
-  ( (|~), (&~), (<|~), (<&~)
-  , (|=), (&=), (<|=), (<&=)
+  ( (.|.~), (.&.~), (<.|.~), (<.&.~)
+  , (.|.=), (.&.=), (<.|.=), (<.&.=)
   , bitAt
   , bits
   ) where
 
 import Control.Lens
-import Control.Monad.State.Class
+import Control.Monad.State
 import Data.Bits
 import Data.Functor
 
-infixr 4 |~, &~, <|~, <&~
-infix 4 |=, &=, <|=, <&=
+-- $setup
+-- >>> import Data.Word
+
+infixr 4 .|.~, .&.~, <.|.~, <.&.~
+infix 4 .|.=, .&.=, <.|.=, <.&.=
 
 -- | Bitwise '.|.' the target(s) of a 'Lens' or 'Setter'
 --
--- >>> _2 |~ 6 $ ("hello",3)
+-- >>> _2 .|.~ 6 $ ("hello",3)
 -- ("hello",7)
 --
 -- @
--- ('|~') :: 'Bits' a => 'Setter' s t a a -> a -> s -> t
--- ('|~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> t
--- ('|~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> t
--- ('|~') :: ('Monoid a', 'Bits' a) => 'Traversal' s t a a -> a -> s -> t
+-- ('.|.~') :: 'Bits' a => 'Setter' s t a a -> a -> s -> t
+-- ('.|.~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> t
+-- ('.|.~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> t
+-- ('.|.~') :: ('Monoid a', 'Bits' a) => 'Traversal' s t a a -> a -> s -> t
 -- @
-(|~):: Bits a => Setting s t a a -> a -> s -> t
-l |~ n = over l (.|. n)
-{-# INLINE (|~) #-}
+(.|.~):: Bits a => Setting s t a a -> a -> s -> t
+l .|.~ n = over l (.|. n)
+{-# INLINE (.|.~) #-}
 
 -- | Bitwise '.&.' the target(s) of a 'Lens' or 'Setter'
 --
--- >>> _2 &~ 7 $ ("hello",254)
+-- >>> _2 .&.~ 7 $ ("hello",254)
 -- ("hello",6)
 --
 -- @
--- ('&~') :: 'Bits' a => 'Setter' s t a a -> a -> s -> t
--- ('&~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> t
--- ('&~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> t
--- ('&~') :: ('Monoid a', 'Bits' a) => 'Traversal' s t a a -> a -> s -> t
+-- ('.&.~') :: 'Bits' a => 'Setter' s t a a -> a -> s -> t
+-- ('.&.~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> t
+-- ('.&.~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> t
+-- ('.&.~') :: ('Monoid a', 'Bits' a) => 'Traversal' s t a a -> a -> s -> t
 -- @
-(&~) :: Bits a => Setting s t a a -> a -> s -> t
-l &~ n = over l (.&. n)
-{-# INLINE (&~) #-}
+(.&.~) :: Bits a => Setting s t a a -> a -> s -> t
+l .&.~ n = over l (.&. n)
+{-# INLINE (.&.~) #-}
 
 -- | Modify the target(s) of a 'Simple' 'Lens', 'Setter' or 'Traversal' by computing its bitwise '.&.' with another value.
 --
+-- >>> execState (do _1 .&.= 15; _2 .&.= 3) (7,7)
+-- (7,3)
+--
 -- @
--- ('&=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Setter' s a -> a -> m ()
--- ('&=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Iso' s a -> a -> m ()
--- ('&=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m ()
--- ('&=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Traversal' s a -> a -> m ()
+-- ('.&.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Setter' s a -> a -> m ()
+-- ('.&.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Iso' s a -> a -> m ()
+-- ('.&.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m ()
+-- ('.&.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Traversal' s a -> a -> m ()
 -- @
-(&=):: (MonadState s m, Bits a) => Simple Setting s a -> a -> m ()
-l &= a = modify (l &~ a)
-{-# INLINE (&=) #-}
+(.&.=):: (MonadState s m, Bits a) => Simple Setting s a -> a -> m ()
+l .&.= a = modify (l .&.~ a)
+{-# INLINE (.&.=) #-}
 
 -- | Modify the target(s) of a 'Simple' 'Lens', 'Setter' or 'Traversal' by computing its bitwise '.|.' with another value.
 --
+-- >>> execState (do _1 .|.= 15; _2 .|.= 3) (7,7)
+-- (15,7)
+--
 -- @
--- ('|=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Setter' s a -> a -> m ()
--- ('|=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Iso' s a -> a -> m ()
--- ('|=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m ()
--- ('|=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Traversal' s a -> a -> m ()
+-- ('.|.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Setter' s a -> a -> m ()
+-- ('.|.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Iso' s a -> a -> m ()
+-- ('.|.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m ()
+-- ('.|.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Traversal' s a -> a -> m ()
 -- @
-(|=) :: (MonadState s m, Bits a) => Simple Setting s a -> a -> m ()
-l |= a = modify (l |~ a)
-{-# INLINE (|=) #-}
+(.|.=) :: (MonadState s m, Bits a) => Simple Setting s a -> a -> m ()
+l .|.= a = modify (l .|.~ a)
+{-# INLINE (.|.=) #-}
 
 -- | Bitwise '.|.' the target(s) of a 'Lens' (or 'Traversal'), returning the result
 -- (or a monoidal summary of all of the results).
 --
--- >>> _2 <|~ 6 $ ("hello",3)
+-- >>> _2 <.|.~ 6 $ ("hello",3)
 -- (7,("hello",7))
 --
 -- @
--- ('<|~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> (a, t)
--- ('<|~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> (a, t)
--- ('<|~') :: ('Bits' a, 'Monoid a) => 'Traversal' s t a a -> a -> s -> (a, t)
+-- ('<.|.~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> (a, t)
+-- ('<.|.~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> (a, t)
+-- ('<.|.~') :: ('Bits' a, 'Monoid a) => 'Traversal' s t a a -> a -> s -> (a, t)
 -- @
-(<|~):: Bits a => LensLike ((,) a) s t a a -> a -> s -> (a, t)
-l <|~ n = l <%~ (.|. n)
-{-# INLINE (<|~) #-}
+(<.|.~):: Bits a => LensLike ((,) a) s t a a -> a -> s -> (a, t)
+l <.|.~ n = l <%~ (.|. n)
+{-# INLINE (<.|.~) #-}
 
 -- | Bitwise '.&.' the target(s) of a 'Lens' or 'Traversal', returning the result
 -- (or a monoidal summary of all of the results).
 --
--- >>> _2 <&~ 7 $ ("hello",254)
+-- >>> _2 <.&.~ 7 $ ("hello",254)
 -- (6,("hello",6))
 --
 -- @
--- ('<&~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> (a, t)
--- ('<&~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> (a, t)
--- ('<&~') :: ('Bits' a, 'Monoid a) => 'Traversal' s t a a -> a -> s -> (a, t)
+-- ('<.&.~') :: 'Bits' a => 'Iso' s t a a -> a -> s -> (a, t)
+-- ('<.&.~') :: 'Bits' a => 'Lens' s t a a -> a -> s -> (a, t)
+-- ('<.&.~') :: ('Bits' a, 'Monoid a) => 'Traversal' s t a a -> a -> s -> (a, t)
 -- @
-(<&~) :: Bits a => LensLike ((,) a) s t a a -> a -> s -> (a, t)
-l <&~ n = l <%~ (.&. n)
-{-# INLINE (<&~) #-}
+(<.&.~) :: Bits a => LensLike ((,) a) s t a a -> a -> s -> (a, t)
+l <.&.~ n = l <%~ (.&. n)
+{-# INLINE (<.&.~) #-}
 
 -- | Modify the target(s) of a 'Simple' 'Lens' (or 'Traversal') by computing its bitwise '.&.' with another value,
 -- returning the result (or a monoidal summary of all of the results traversed)
 --
+-- >>> runState (_1 <.&.= 15) (31,0)
+-- (15,(15,0))
+--
 -- @
--- ('<&=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m a
--- ('<&=') :: ('MonadState' s m, 'Bits' a, 'Monoid' a) => 'Simple' 'Traversal' s a -> a -> m a
+-- ('<.&.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m a
+-- ('<.&.=') :: ('MonadState' s m, 'Bits' a, 'Monoid' a) => 'Simple' 'Traversal' s a -> a -> m a
 -- @
-(<&=):: (MonadState s m, Bits a) => SimpleLensLike ((,)a) s a -> a -> m a
-l <&= b = l <%= (.&. b)
-{-# INLINE (<&=) #-}
+(<.&.=):: (MonadState s m, Bits a) => SimpleLensLike ((,)a) s a -> a -> m a
+l <.&.= b = l <%= (.&. b)
+{-# INLINE (<.&.=) #-}
 
 -- | Modify the target(s) of a 'Simple' 'Lens', (or 'Traversal') by computing its bitwise '.|.' with another value,
 -- returning the result (or a monoidal summary of all of the results traversed)
 --
+-- >>> runState (_1 <.|.= 7) (28,0)
+-- (31,(31,0))
+--
 -- @
--- ('<|=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m a
--- ('<|=') :: ('MonadState' s m, 'Bits' a, 'Monoid' a) => 'Simple' 'Traversal' s a -> a -> m a
+-- ('<.|.=') :: ('MonadState' s m, 'Bits' a) => 'Simple' 'Lens' s a -> a -> m a
+-- ('<.|.=') :: ('MonadState' s m, 'Bits' a, 'Monoid' a) => 'Simple' 'Traversal' s a -> a -> m a
 -- @
-(<|=) :: (MonadState s m, Bits a) => SimpleLensLike ((,)a) s a -> a -> m a
-l <|= b = l <%= (.|. b)
-{-# INLINE (<|=) #-}
+(<.|.=) :: (MonadState s m, Bits a) => SimpleLensLike ((,)a) s a -> a -> m a
+l <.|.= b = l <%= (.|. b)
+{-# INLINE (<.|.=) #-}
 
 -- | This lens can be used to access the value of the nth bit in a number.
 --
@@ -141,6 +156,12 @@ l <|= b = l <%= (.|. b)
 --
 -- >>> 15^.bitAt 4
 -- False
+--
+-- >>> 15 & bitAt 4 .~ True
+-- 31
+--
+-- >>> 16 & bitAt 4 .~ False
+-- 0
 bitAt :: Bits b => Int -> SimpleIndexedLens Int b Bool
 bitAt n = index $ \f b -> (\x -> if x then setBit b n else clearBit b n) <$> f n (testBit b n)
 {-# INLINE bitAt #-}
@@ -149,12 +170,11 @@ bitAt n = index $ \f b -> (\x -> if x then setBit b n else clearBit b n) <$> f n
 --
 -- The bit position is available as the index.
 --
--- >>> import Data.Word
 -- >>> toListOf bits (5 :: Word8)
 -- [True,False,True,False,False,False,False,False]
 --
--- If you supply this an 'Integer', the result will
--- be an infinite 'Traversal' that can be productively consumed.
+-- If you supply this an 'Integer', the result will be an infinite 'Traversal', which
+-- can be productively consumed, but not reassembled.
 bits :: (Num b, Bits b) => SimpleIndexedTraversal Int b Bool
 bits = index $ \f b -> let
     g n      = (,) n <$> f n (testBit b n)

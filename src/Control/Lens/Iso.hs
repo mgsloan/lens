@@ -1,5 +1,10 @@
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE TypeOperators #-}
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
+{-# LANGUAGE Trustworthy #-}
+#endif
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Control.Lens.Iso
@@ -14,19 +19,18 @@ module Control.Lens.Iso
   (
   -- * Isomorphism Lenses
     Iso
+  -- * Isomorphism Construction
+  , Isomorphic(..)
   , iso
-  , isos
+  -- * Consuming Isomorphisms
+  , from
+  , via
+  , Isomorphism
   -- * Working with isomorphisms
   , ala
   , auf
   , under
   , mapping
-  , review
-  -- * Primitive isomorphisms
-  , from
-  , via
-  , Isomorphism(..)
-  , Isomorphic(..)
   -- ** Common Isomorphisms
   , _const
   , identity
@@ -42,18 +46,46 @@ module Control.Lens.Iso
 
 import Control.Applicative
 import Control.Category
-import Control.Lens.Getter
+import Control.Monad.Reader
+import Control.Lens.Classes
 import Control.Lens.Internal
-import Control.Lens.Isomorphic
-import Control.Lens.Setter
 import Control.Lens.Type
 import Data.Functor.Identity
 import Data.Maybe (fromMaybe)
 import Prelude hiding ((.),id)
+import Unsafe.Coerce
 
 -- $setup
 -- >>> import Control.Lens
 -- >>> import Data.Map as Map
+
+----------------------------------------------------------------------------
+-- Consuming Isomorphisms
+-----------------------------------------------------------------------------
+
+type Isomorphism s t a b = Isos (a -> Mutator b) (s -> Mutator t)
+
+-- | Invert an isomorphism.
+--
+-- Note to compose an isomorphism and receive an isomorphism in turn you'll need to use
+-- 'Control.Category.Category'
+--
+-- @'from' ('from' l) ≡ l@
+--
+-- If you imported 'Control.Category..' from @Control.Category@, then:
+--
+-- @'from' l '.' 'from' r ≡ 'from' (r '.' l)@
+from :: (Isomorphic k, Functor f) => Isomorphism s t a b -> k (s -> f t) (a -> f b)
+from (Isos sa as tb bt) = isos as sa (unsafeCoerce bt) (unsafeCoerce tb)
+{-# INLINE from #-}
+
+-- | Convert from an 'Isomorphism' back to any 'Isomorphic' value.
+--
+-- This is useful when you need to store an isomoprhism as a data type inside a container
+-- and later reconstitute it as an overloaded function.
+via :: (Isomorphic k, Functor f) => Isomorphism s t a b -> k (a -> f b) (s -> f t)
+via (Isos sa as tb bt) = isos sa as (unsafeCoerce tb) (unsafeCoerce bt)
+{-# INLINE via #-}
 
 -----------------------------------------------------------------------------
 -- Isomorphisms families as Lenses
@@ -76,23 +108,6 @@ type Iso s t a b = forall k f. (Isomorphic k, Functor f) => k (a -> f b) (s -> f
 -- @type 'SimpleIso' = 'Control.Lens.Type.Simple' 'Iso'@
 type SimpleIso s a = Iso s s a a
 
-
--- | Build an isomorphism family from two pairs of inverse functions
---
--- @
--- 'view' ('isos' sa as tb bt) ≡ sa
--- 'view' ('from' ('isos' sa as tb bt)) ≡ as
--- 'set' ('isos' sa as tb bt) ab ≡ bt '.' ab '.' sa
--- 'set' ('from' ('isos' ac ca bd db)) ab ≡ bd '.' ab '.' ca
--- @
---
--- @isos :: (s -> a) -> (a -> s) -> (t -> b) -> (b -> t) -> 'Iso' s t a b@
-isos :: (Isomorphic k, Functor f) => (s -> a) -> (a -> s) -> (t -> b) -> (b -> t) -> k (a -> f b) (s -> f t)
-isos sa as tb bt = isomorphic
-  (\afb s -> bt <$> afb (sa s))
-  (\sft a -> tb <$> sft (as a))
-{-# INLINE isos #-}
-
 -- | Build a simple isomorphism from a pair of inverse functions
 --
 --
@@ -113,8 +128,8 @@ iso sa as = isos sa as sa as
 -- >>> :m + Data.Monoid.Lens Data.Foldable
 -- >>> ala _sum foldMap [1,2,3,4]
 -- 10
-ala :: Simple Iso s a -> ((s -> a) -> e -> a) -> e -> s
-ala l f e = f (view l) e ^. from l
+ala :: Isomorphism s t a b -> ((s -> a) -> e -> b) -> e -> t
+ala (Isos sa _ _ bt) f e = unsafeCoerce bt (f sa e)
 {-# INLINE ala #-}
 
 -- |
@@ -122,25 +137,18 @@ ala l f e = f (view l) e ^. from l
 --
 -- Mnemonically, the German /auf/ plays a similar role to /à la/, and the combinator
 -- is 'ala' with an extra function argument.
-auf :: Simple Iso s a -> ((b -> a) -> e -> a) -> (b -> s) -> e -> s
-auf l f g e = f (view l . g) e ^. from l
+auf :: Isomorphism s t a b -> ((r -> a) -> e -> b) -> (r -> s) -> e -> t
+auf (Isos sa _ _ bt) f g e = unsafeCoerce bt (f (sa . g) e)
 {-# INLINE auf #-}
 
 -- | The opposite of working 'over' a Setter is working 'under' an Isomorphism.
 --
--- @'under' = 'over' '.' 'from'@
+-- @'under' ≡ 'over' '.' 'from'@
 --
 -- @'under' :: 'Iso' s t a b -> (s -> t) -> a -> b@
-under :: Isomorphism (a -> Mutator b) (s -> Mutator t) -> (s -> t) -> a -> b
-under = over . from
+under :: Isomorphism s t a b -> (s -> t) -> a -> b
+under (Isos _ as tb _) st a = unsafeCoerce tb (st (as a))
 {-# INLINE under #-}
-
--- | This can be used to turn an 'Iso' around and 'view' the other way.
---
--- @'review' = 'view' '.' 'from'@
-review :: Overloaded Isomorphism (Accessor s) s t a b -> a -> s
-review (Isomorphism _ l) = view l
-{-# INLINE review #-}
 
 -----------------------------------------------------------------------------
 -- Isomorphisms
@@ -184,8 +192,8 @@ enum = iso toEnum fromEnum
 {-# INLINE enum #-}
 
 -- | This can be used to lift any 'SimpleIso' into an arbitrary functor.
-mapping :: Functor f => SimpleIso s a -> SimpleIso (f s) (f a)
-mapping l = iso (view l <$>) (view (from l) <$>)
+mapping :: Functor f => Isos (a -> g b) (s -> g t) -> Iso (f s) (f t) (f a) (f b)
+mapping (Isos sa as tb bt) = isos (fmap sa) (fmap as) (fmap (unsafeCoerce tb)) (fmap (unsafeCoerce bt))
 {-# INLINE mapping #-}
 
 -- | Composition with this isomorphism is occasionally useful when your 'Lens',
@@ -193,7 +201,7 @@ mapping l = iso (view l <$>) (view (from l) <$>)
 -- argument to force that argument to agree with the
 -- type of a used argument and avoid @ScopedTypeVariables@ or other ugliness.
 simple :: Simple Iso a a
-simple = isomorphic id id
+simple = iso id id
 {-# INLINE simple #-}
 
 -- | If @v@ is an element of a type @a@, and @a'@ is @a@ sans the element @v@, then @non v@ is an isomorphism from
@@ -222,12 +230,11 @@ simple = isomorphic id id
 -- >>> Map.empty & at "hello" . non Map.empty . at "world" ?~ "!!!"
 -- fromList [("hello",fromList [("world","!!!")])]
 --
--- and when have deleting the last entry from the nested map mean that we 
+-- and when have deleting the last entry from the nested map mean that we
 -- should delete its entry from the surrounding one:
 --
 -- >>> fromList [("hello",fromList [("world","!!!")])] & at "hello" . non Map.empty . at "world" .~ Nothing
 -- fromList []
-
 non :: Eq a => a -> Simple Iso (Maybe a) a
 non a = iso (fromMaybe a) go where
   go b | a == b    = Nothing

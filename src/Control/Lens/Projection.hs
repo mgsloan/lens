@@ -1,8 +1,9 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances #-}
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
+{-# LANGUAGE Trustworthy #-}
+#endif
 -------------------------------------------------------------------------------
 -- |
 -- Module      :  Control.Lens.Projection
@@ -14,61 +15,134 @@
 --
 -------------------------------------------------------------------------------
 module Control.Lens.Projection
-  ( Projection
+  (
+  -- * Projections
+    Projection
+  -- * Constructing Projections
   , Projective(..)
-  , project
-  , by
   , Project(..)
-  , projection
-  , stereo
-  , mirror
+  -- * Consuming Projections
+  , Projecting
+  , project
+  , qua
+  , review, reviews
+  , reuse, reuses
+  -- * Common projections
+  , _left
+  , _right
   -- * Simple
   , SimpleProjection
   ) where
 
 import Control.Applicative
-import Control.Lens.Type
+import Control.Category
+import Control.Monad.Reader as Reader
+import Control.Monad.State as State
+import Control.Lens.Classes
 import Control.Lens.Getter
-import Data.Functor.Identity
-import Control.Lens.Iso
+import Control.Lens.Internal
+import Control.Lens.Type
+import Prelude hiding (id,(.))
+import Unsafe.Coerce
 
--- | A 'Projection' is a 'Traversal' that can also be turned around with 'by' to obtain a 'Getter'
-type Projection s t a b = forall k f. (Projective k s b, Applicative f) => k (a -> f b) (s -> f s)
+-- $setup
+-- >>> import Control.Lens
 
--- | Used to provide overloading of projections.
-class Projective k a d where
-  projective :: (d -> a) -> (x -> y) -> k x y
+------------------------------------------------------------------------------
+-- Projection Internals
+------------------------------------------------------------------------------
 
-instance Projective (->) a d where
-  projective _ x = x
+-- | A 'Projection' is a 'Traversal' that can also be turned around with 'qua' to obtain a 'Getter'
+type Projection s t a b = forall k f. (Projective k, Applicative f) => k (a -> f b) (s -> f t)
 
--- | A concrete 'Projection', suitable for storing in a container or extracting an embedding.
-data Project s b x y = Project (b -> s) (x -> y)
-
--- | Compose projections.
-stereo :: Projective k s a => Project t a y z -> Project s t x y -> k x z
-stereo (Project g f) (Project i h) = projective (i.g) (f.h)
-
-instance (s ~ s', b ~ b') => Projective (Project s b) s' b' where
-  projective = Project
+-- | A @'Simple' 'Projection'@.
+type SimpleProjection s a = Projection s s a a
 
 -- | Reflect a 'Projection'.
-project :: Projective k s b => Overloaded (Project s b) f s s a b -> Overloaded k f s s a b
-project (Project f g) = projective f g
+project :: (Projective k, Applicative f) => Overloaded Project f s t a b -> Overloaded k f s t a b
+project (Project f g) = projecting (unsafeCoerce f) (unsafeCoerce g)
 
--- | Turn a 'Projection' around to get an embedding
-by :: Project s b (b -> Identity b) (s -> Identity s) -> Getter b s
-by (Project g _) = to g
+-- | Consume a 'Project'. This is commonly used when a function takes a 'Projection' as a parameter.
+type Projecting f s t a b = Overloaded Project f s t a b
 
--- | Build a 'Projection'
-projection :: (b -> s) -> (s -> Maybe a) -> Projection s t a b
-projection bs sma = projective bs (\afb a -> maybe (pure a) (fmap bs . afb) (sma a))
+-- | Turn a 'Projection' around to get at its contents.
+qua :: Projecting Mutator s t a b -> Getter b t
+qua (Project bt _) = to (unsafeCoerce bt)
 
--- | Convert an 'Iso' to a 'Projection'.
+-- | This can be used to turn an 'Control.Lens.Iso.Iso' or 'Projection' around and 'view' a value (or the current environment) through it the other way.
 --
--- Ideally we would be able to use an 'Iso' directly as a 'Projection', but this opens a can of worms.
-mirror :: Projective k s a => Simple Iso s a -> Simple Projection s a
-mirror l = projection (^.from l) (\a -> Just (a^.l))
+-- @'review' ≡ 'view' '.' 'from'@
+review :: MonadReader b m => Projecting Mutator s t a b -> m t
+review (Project bt _) = asks (unsafeCoerce bt)
+{-# INLINE review #-}
 
--- | @type 'SimpleProjection' = 'Simple' 'Projection'@
-type SimpleProjection s a = Projection s s a a
+-- | This can be used to turn an 'Control.Lens.Iso.Iso' or 'Projection' around and 'view' a value (or the current environment) through it the other way,
+-- applying a function.
+--
+-- @'reviews' ≡ 'views' '.' 'from'@
+reviews :: MonadReader b m => Projecting Mutator s t a b -> (t -> r) -> m r
+reviews (Project bt _) f = asks (f . unsafeCoerce bt)
+{-# INLINE reviews #-}
+
+-- | This can be used to turn an 'Control.Lens.Iso.Iso' or 'Projection' around and 'use' a value (or the current environment) through it the other way.
+--
+-- @'reuse' ≡ 'use' '.' 'from'@
+reuse :: MonadState b m => Projecting Mutator s t a b -> m t
+reuse (Project bt _) = gets (unsafeCoerce bt)
+{-# INLINE reuse #-}
+
+-- | This can be used to turn an 'Control.Lens.Iso.Iso' or 'Projection' around and 'use' the current state through it the other way,
+-- applying a function.
+--
+-- @'reuses' ≡ 'uses' '.' 'from'@
+reuses :: MonadState b m => Projecting Mutator s t a b -> (t -> r) -> m r
+reuses (Project bt _) f = gets (f . unsafeCoerce bt)
+{-# INLINE reuses #-}
+
+-- | A traversal for tweaking the left-hand value of an 'Either':
+--
+-- >>> over _left (+1) (Left 2)
+-- Left 3
+--
+-- >>> over _left (+1) (Right 2)
+-- Right 2
+--
+-- >>> Right 42 ^._left :: String
+-- ""
+--
+-- >>> Left "hello" ^._left
+-- "hello"
+--
+-- @'_left' :: 'Applicative' f => (a -> f b) -> 'Either' a c -> f ('Either' b c)@
+_left :: Projection (Either a c) (Either b c) a b
+_left = projecting Left $ \ f e -> case e of
+  Left a  -> Left <$> f a
+  Right c -> pure $ Right c
+{-# INLINE _left #-}
+
+-- | traverse the right-hand value of an 'Either':
+--
+-- @'_right' ≡ 'Data.Traversable.traverse'@
+--
+-- Unfortunately the instance for
+-- @'Data.Traversable.Traversable' ('Either' c)@ is still missing from base,
+-- so this can't just be 'Data.Traversable.traverse'
+--
+-- >>> over _right (+1) (Left 2)
+-- Left 2
+--
+-- >>> over _right (+1) (Right 2)
+-- Right 3
+--
+-- >>> Right "hello" ^._right
+-- "hello"
+--
+-- >>> Left "hello" ^._right :: [Double]
+-- []
+--
+-- @'_right' :: 'Applicative' f => (a -> f b) -> 'Either' c a -> f ('Either' c a)@
+_right :: Projection (Either c a) (Either c b) a b
+_right = projecting Right $ \f e -> case e of
+  Left c -> pure $ Left c
+  Right a -> Right <$> f a
+{-# INLINE _right #-}

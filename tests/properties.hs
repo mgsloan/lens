@@ -67,19 +67,19 @@ prop_5                               = isLens (_5 :: Simple Lens ((),(),(),(),In
 
 prop_2_2                             = isLens (_2._2 :: Simple Lens (Int,(Int,Bool),Double) Bool)
 
-prop_illegal_lens                    = expectFailure $ isLens bad
-prop_illegal_traversal               = expectFailure $ isTraversal bad
-prop_illegal_setter                  = expectFailure $ isSetter bad
-prop_illegal_iso                     = expectFailure $ isIso badIso
+-- prop_illegal_lens                    = expectFailure $ isLens bad
+-- prop_illegal_traversal               = expectFailure $ isTraversal bad
+-- prop_illegal_setter                  = expectFailure $ isSetter bad
+-- prop_illegal_iso                     = expectFailure $ isIso badIso
 
 -- Control.Lens.Setter
 prop_mapped                          = isSetter (mapped :: Simple Setter [Int] Int)
 prop_mapped_mapped                   = isSetter (mapped.mapped :: Simple Setter [Maybe Int] Int)
 
-prop_both                            = isTraversal (both :: Simple Traversal (Int,Int) Int)
+prop_both                            = isTraversal (both    :: Simple Traversal (Int,Int) Int)
 prop_value (Fun _ k :: Fun Int Bool) = isTraversal (value k :: Simple Traversal (Int,Int) Int)
-prop_traverseLeft                    = isTraversal (traverseLeft :: Simple Traversal (Either Int Bool) Int)
-prop_traverseRight                   = isTraversal (traverseRight:: Simple Traversal (Either Int Bool) Bool)
+prop_traverseLeft                    = isTraversal (_left   :: Simple Traversal (Either Int Bool) Int)
+prop_traverseRight                   = isTraversal (_right  :: Simple Traversal (Either Int Bool) Bool)
 
 -- Data.Text.Lens
 prop_text s                          = s^.packed.from packed == s

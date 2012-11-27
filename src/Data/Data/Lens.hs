@@ -1,8 +1,12 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE LiberalTypeSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
@@ -24,17 +28,31 @@
 --
 ----------------------------------------------------------------------------
 module Data.Data.Lens
-  ( template
+  (
+  -- * Generic Traversal
+    template
   , tinplate
   , uniplate
   , biplate
-  -- * Traversal of Data
+  -- * Field Accessor Traversal
+  , upon
+  , upon'
+  , uponTheDeep
+  , uponTheDeep'
+  -- * Data Traversal
   , gtraverse
   ) where
 
 import           Control.Applicative
 import           Control.Arrow ((&&&))
 import           Control.Exception as E
+import           Control.Lens.Getter
+import           Control.Lens.Indexed
+import           Control.Lens.IndexedLens
+import           Control.Lens.IndexedSetter
+import           Control.Lens.IndexedTraversal
+import           Control.Lens.Internal
+import           Control.Lens.Setter
 import           Control.Lens.Traversal
 import           Control.Lens.Type
 import           Data.Data
@@ -48,6 +66,9 @@ import           Data.Monoid
 import           GHC.IO
 import           GHC.Exts (realWorld#)
 import           Unsafe.Coerce as Unsafe
+
+-- $setup
+-- >>> import Control.Lens
 
 -------------------------------------------------------------------------------
 -- Generic Traversal
@@ -105,6 +126,139 @@ biplate :: forall s a. (Data s, Typeable a) => Simple Traversal s a
 biplate = biplateData (fromOracle answer) where
   answer = hitTest (undefined :: s) (undefined :: a)
 {-# INLINE biplate #-}
+
+------------------------------------------------------------------------------
+-- Automatic Traversal construction from field accessors
+------------------------------------------------------------------------------
+
+data FieldException a = FieldException !Int a deriving Typeable
+
+instance Show (FieldException a) where
+  showsPrec d (FieldException i _) = showParen (d > 10) $
+    showString "<field " . showsPrec 11 i . showChar '>'
+
+instance Typeable a => Exception (FieldException a)
+
+lookupon :: Typeable a => SimpleLensLike (Indexing Mutator) s a -> (s -> a) -> s -> Maybe (Int, Context a a s)
+lookupon l field s = case unsafePerformIO $ E.try $ evaluate $ field $ s & indexed l %@~ \i (a::a) -> E.throw (FieldException i a) of
+  Right _ -> Nothing
+  Left e -> case fromException e of
+    Nothing -> Nothing
+    Just (FieldException i a) -> Just (i, Context (\a' -> set (elementOf l i) a' s) a)
+{-# INLINE lookupon #-}
+
+-- | This automatically constructs a 'Simple' 'Traversal' from a field accessor.
+--
+-- >>> (2,4) & upon fst *~ 5
+-- (10,4)
+--
+-- There are however, a few caveats on how this function can be used:
+--
+-- First, the user supplied function must access one of the \"immediate descendants\" of the structure as attempts
+-- to access deeper structures or use non-field accessor functions will generate an empty 'Traversal'.
+--
+-- A more rigorous way to say \"immediate descendants\" is that the function must only inspect one value that would
+-- be visited by 'template'.
+--
+-- Note: this even permits some functions to be used directly.
+--
+-- >>> [1,2,3,4] & upon head .~ 0
+-- [0,2,3,4]
+--
+-- >>> [1,2,3,4] & upon last .~ 5
+-- [1,2,3,5]
+--
+-- >>> [1,2,3,4] ^? upon tail
+-- Just [2,3,4]
+--
+-- >>> "" ^? upon tail
+-- Nothing
+--
+-- Second, the structure must not contain strict or unboxed fields of the same type that will be visited by 'Data'
+--
+-- If the supplied function is not a descendant that would be visible to 'template', the resulting 'Traversal'
+-- will traverse no elements.
+--
+-- If the field you name isn't visible to 'template', but is a "descendant" of a field visible to 'template', then
+-- upon will return the *ancestor* it can visit, not the field you asked for! Be careful.
+--
+-- >>> upon (tail.tail) .~ [10,20] $ [1,2,3,4] -- BAD
+-- [1,10,20]
+--
+-- To resolve this when you need deep self-similar recursion, use 'uponTheDeep'. However, 'upon' terminates for
+-- more inputs, while 'uponTheDeep' can get lost in structures that are infinitely depth-recursive through @a@.
+--
+-- >>> uponTheDeep (tail.tail) .~ [10,20] $ [1,2,3,4] -- GOOD
+-- [1,2,10,20]
+--
+-- The index of the 'Traversal' can be used as an offset into @'elementOf' ('indexed' 'template')@ or into the list
+-- returned by @'holesOf' 'template'@.
+upon :: forall s a. (Data s, Typeable a) => (s -> a) -> SimpleIndexedTraversal Int s a
+upon field = index $ \f s -> case lookupon template field s of
+  Nothing -> pure s
+  Just (i, Context k a) -> k <$> f i a
+{-# INLINE upon #-}
+
+-- | This more trusting version of 'upon' uses your function directly as the getter for a 'Lens'.
+--
+-- This means that reading from 'upon'' is considerably faster than 'upon'.
+--
+-- However, you pay for faster access in two ways:
+--
+-- 1. When passed an illegal field accessor, 'upon'' will give you a 'Lens' that quietly violates
+--    the laws unlike 'upon' will will give you a legal 'Traversal', that avoids modifying the target.
+--
+-- 2. Modifying with the lens is slightly slower, since it has to go back and calculate the index after the fact.
+--
+-- When given a legal field accessor, the index of the 'Lens' can be used as an offset into
+-- @'elementOf' ('indexed' 'template')@ or into the list returned by @'holesOf' 'template'@.
+upon' :: forall s a. (Data s, Typeable a) => (s -> a) -> SimpleIndexedLens Int s a
+upon' field = index $ \f s -> let
+    ~(i, Context k _) = case lookupon template field s of
+      Nothing -> error "upon': no index, not a member"
+      Just ip -> ip
+  in k <$> f i (field s)
+{-# INLINE upon' #-}
+
+-- | The design of 'upon' doesn't allow it to search inside of values of type 'a' for other values of type 'a'.
+-- uponTheDeep provides this additional recursion.
+--
+-- >>> uponTheDeep (tail.tail) .~ [10,20] $ [1,2,3,4]
+-- [1,2,10,20]
+--
+-- @'uponTheDeep' :: ('Data' s, 'Data' a) => (s -> a) -> 'SimpleIndexedTraversal' [Int] s a@
+uponTheDeep :: forall k f s a. (Indexed [Int] k, Applicative f, Data s, Data a) => (s -> a) -> k (a -> f a) (s -> f s)
+uponTheDeep field = index $ \ f s -> case lookupon template field s of
+  Nothing -> pure s
+  Just (i, Context k0 a0) ->
+    let
+      go :: [Int] -> SimpleTraversal s a -> (a -> s) -> a -> f s
+      go is l k a = case lookupon (l.uniplate) field s of
+        Nothing                 -> k <$> f (reverse is) a
+        Just (j, Context k' a') -> go (j:is) (l.elementOf uniplate j) k' a'
+    in go [i] (elementOf template i) k0 a0
+{-# INLINE uponTheDeep #-}
+
+-- | The design of 'upon'' doesn't allow it to search inside of values of type 'a' for other values of type 'a'.
+-- 'uponTheDeep'' provides this additional recursion.
+--
+-- Like 'upon'', 'uponTheDeep'' trusts the user supplied function more than 'uponTheDeep' using it directly
+-- as the accessor. This enables reading from the resulting 'Lens' to be considerably faster at the risk of
+-- generating an illegal lens.
+--
+-- >>> uponTheDeep' (tail.tail) .~ [10,20] $ [1,2,3,4]
+-- [1,2,10,20]
+uponTheDeep' :: forall s a. (Data s, Data a) => (s -> a) -> SimpleIndexedLens [Int] s a
+uponTheDeep' field = index $ \ f s -> let
+    ~(isn, kn) = case lookupon template field s of
+      Nothing -> (error "uponTheDeep': no index, not a member", const s)
+      Just (i, Context k0 _) -> go [i] (elementOf template i) k0
+    go :: [Int] -> SimpleTraversal s a -> (a -> s) -> ([Int], a -> s)
+    go is l k = case lookupon (l.uniplate) field s of
+      Nothing                -> (reverse is, k)
+      Just (j, Context k' _) -> go (j:is) (l.elementOf uniplate j) k'
+  in kn <$> f isn (field s)
+{-# INLINE uponTheDeep' #-}
 
 -------------------------------------------------------------------------------
 -- Data Box

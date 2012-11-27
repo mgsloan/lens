@@ -1,7 +1,9 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE LiberalTypeSynonyms #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LiberalTypeSynonyms #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Control.Lens.Traversal
@@ -15,11 +17,11 @@
 -- 'Traversable'. It allows you to traverse over a structure and change out
 -- its contents with monadic or applicative side-effects. Starting from
 --
--- @'traverse' :: ('Traversable' t, 'Applicative' f) => (a -> f b) -> t a -> f (t b)@,
+-- @'traverse' :: ('Traversable' t, 'Applicative' f) => (a -> f b) -> t a -> f (t b)@
 --
 -- we monomorphize the contents and result to obtain
 --
---  > type Traversal s t a b = forall f. Applicative f => (a -> f b) -> s -> f t
+-- @type 'Traversal' s t a b = forall f. 'Applicative' f => (a -> f b) -> s -> f t@
 --
 -- While a 'Traversal' isn't quite a 'Fold', it _can_ be used for 'Getting'
 -- like a 'Fold', because given a 'Monoid' @m@, we have an 'Applicative'
@@ -31,9 +33,6 @@ module Control.Lens.Traversal
   (
   -- * Lenses
     Traversal
-
-  -- ** Lensing Traversals
-  , element, elementOf
 
   -- * Traversing and Lensing
   , traverseOf, forOf, sequenceAOf
@@ -51,8 +50,6 @@ module Control.Lens.Traversal
 
   -- * Common Traversals
   , Traversable(traverse)
-  , traverseLeft
-  , traverseRight
   , both
   , beside
   , taking
@@ -78,8 +75,8 @@ import Control.Lens.Internal.Combinators
 import Control.Lens.Type
 import Control.Monad.State.Class        as State
 import Control.Monad.Trans.State.Lazy   as Lazy
-import Data.Maybe
 import Data.Traversable
+
 
 -- $setup
 -- >>> import Control.Lens
@@ -390,36 +387,6 @@ holesOf l a = f (ins b) (outs b) where
   f (x:xs) g = Context (g . (:xs)) x : f xs (g . (x:))
 {-# INLINE holesOf #-}
 
--- | A 'Lens' to 'Control.Lens.Getter.view'/'Control.Lens.Setter.set' the nth element 'elementOf' a 'Traversal', 'Lens' or 'Control.Lens.Iso.Iso'.
---
--- Attempts to access beyond the range of the 'Traversal' will cause an error. This also works transparently
--- with Folds, returning a getter.
---
--- >>> [[1],[3,4]] & elementOf (traverse.traverse) 1 .~ 5
--- [[1],[5,4]]
---
--- >>> [[1],[3,4]]^.elementOf (folded.folded) 1
--- 3
---
--- >>> [0..]^.elementOf folded 5
--- 5
---
--- >>> take 10 $ (elementOf traverse 3 .~ 16) [0..]
--- [0,1,2,16,4,5,6,7,8,9]
-elementOf :: Functor f => LensLike (ElementOf f) s t a a -> Int -> LensLike f s t a a
-elementOf l i f s = case getElementOf (l go s) 0 of
-    Searching _ _ mft -> fromMaybe (error "elOf: index out of range") mft
-  where
-    go a = ElementOf $ \j -> Searching (j + 1) a (if i == j then Just (f a) else Nothing)
-
--- | Access the /nth/ element of a 'Traversable' container.
---
--- Attempts to access beyond the range of the 'Traversal' will cause an error.
---
--- @'element' ≡ 'elementOf' 'traverse'@
-element :: Traversable t => Int -> Simple Lens (t a) a
-element = elementOf traverse
-
 ------------------------------------------------------------------------------
 -- Internal functions used by 'partsOf', 'holesOf', etc.
 ------------------------------------------------------------------------------
@@ -462,8 +429,10 @@ unconsWithDefault _ (x:xs) = (x,xs)
 --
 -- >>> both *~ 10 $ (1,2)
 -- (10,20)
+--
 -- >>> over both length ("hello","world")
 -- (5,5)
+--
 -- >>> ("hello","world")^.both
 -- "helloworld"
 both :: Traversal (a,a) (b,b) a b
@@ -478,52 +447,12 @@ beside :: Applicative f => LensLike f s t a b -> LensLike f s' t' a b -> LensLik
 beside l r f ~(s,s') = (,) <$> l f s <*> r f s'
 {-# INLINE beside #-}
 
--- | A traversal for tweaking the left-hand value of an 'Either':
---
--- >>> over traverseLeft (+1) (Left 2)
--- Left 3
--- >>> over traverseLeft (+1) (Right 2)
--- Right 2
--- >>> Right 42 ^.traverseLeft :: String
--- ""
--- >>> Left "hello" ^.traverseLeft
--- "hello"
---
--- @traverseLeft :: 'Applicative' f => (a -> f b) -> 'Either' a c -> f ('Either' b c)@
-traverseLeft :: Traversal (Either a c) (Either b c) a b
-traverseLeft f (Left a)  = Left <$> f a
-traverseLeft _ (Right c) = pure $ Right c
-{-# INLINE traverseLeft #-}
-
--- | traverse the right-hand value of an 'Either':
---
--- @'traverseRight' ≡ 'Data.Traversable.traverse'@
---
--- Unfortunately the instance for
--- @'Data.Traversable.Traversable' ('Either' c)@ is still missing from base,
--- so this can't just be 'Data.Traversable.traverse'
---
--- >>> over traverseRight (+1) (Left 2)
--- Left 2
--- >>> over traverseRight (+1) (Right 2)
--- Right 3
--- >>> Right "hello" ^.traverseRight
--- "hello"
--- >>> Left "hello" ^.traverseRight :: [Double]
--- []
---
--- @traverseRight :: 'Applicative' f => (a -> f b) -> 'Either' c a -> f ('Either' c a)@
-traverseRight :: Traversal (Either c a) (Either c b) a b
-traverseRight _ (Left c) = pure $ Left c
-traverseRight f (Right a) = Right <$> f a
-{-# INLINE traverseRight #-}
-
 -- | Visit the first /n/ targets of a 'Traversal', 'Fold', 'Getter' or 'Lens'.
 --
 -- >>> [("hello","world"),("!!!","!!!")]^.. taking 2 (traverse.both)
 -- ["hello","world"]
 --
--- >>> [1..]^.. taking 3 traverse
+-- >>> [1..] ^.. taking 3 traverse
 -- [1,2,3]
 --
 -- >>> over (taking 5 traverse) succ "hello world"
@@ -537,7 +466,7 @@ taking n l f s = outsT b <$> traverse f (take n $ insT b) where b = l sellT s
 -- >>> ("hello","world") ^? dropping 1 both
 -- Just "world"
 --
--- Dropping works on infinite traversals as well.
+-- Dropping works on infinite traversals as well:
 --
 -- >>> [1..]^? dropping 1 folded
 -- Just 2
@@ -577,3 +506,4 @@ data ReifiedTraversal s t a b = ReifyTraversal { reflectTraversal :: Traversal s
 
 -- | @type SimpleReifiedTraversal = 'Simple' 'ReifiedTraversal'@
 type SimpleReifiedTraversal s a = ReifiedTraversal s s a a
+

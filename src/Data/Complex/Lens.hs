@@ -11,60 +11,132 @@
 -- Stability   :  experimental
 -- Portability :  Rank2Types
 --
+-- Lenses and traversals for complex numbers
+--
 ----------------------------------------------------------------------------
 module Data.Complex.Lens
-  ( real, imaginary, polarize
-  , traverseComplex
+  ( _realPart
+  , _imagPart
+  , _polar
+  , _magnitude
+  , _phase
+  , _conjugate
+  , complex
   ) where
 
 import Control.Applicative
 import Control.Lens
 import Data.Complex
 
+-- $setup
+-- >>> let { a ≈ b = abs (a - b) < 1e-6; infix 4 ≈ }
+
 -- | Access the 'realPart' of a 'Complex' number
 --
--- >>> (1.0 :+ 0.0)^.real
+-- >>> (1.0 :+ 0.0)^._realPart
 -- 1.0
 --
--- @'real' :: 'Functor' f => (a -> f a) -> 'Complex' a -> f ('Complex' a)@
-#if MIN_VERSION_base(4,4,0)
-real :: Simple Lens (Complex a) a
-#else
-real :: RealFloat a => Simple Lens (Complex a) a
-#endif
-real f (a :+ b) = (:+ b) <$> f a
-
--- | Access the 'imaginaryPart' of a 'Complex' number
+-- >>> 3 :+ 1 & _realPart *~ 2
+-- 6 :+ 1
 --
--- >>> (0.0 :+ 1.0)^.imaginary
+-- @'_realPart' :: 'Functor' f => (a -> f a) -> 'Complex' a -> f ('Complex' a)@
+#if MIN_VERSION_base(4,4,0)
+_realPart :: Simple Lens (Complex a) a
+#else
+_realPart :: RealFloat a => Simple Lens (Complex a) a
+#endif
+_realPart f (a :+ b) = (:+ b) <$> f a
+
+-- | Access the 'imagPart' of a 'Complex' number
+--
+-- >>> (0.0 :+ 1.0)^._imagPart
 -- 1.0
 --
--- @'imaginary' :: 'Functor' f => (a -> f a) -> 'Complex' a -> f ('Complex' a)@
+-- @'_imagPart' :: 'Functor' f => (a -> f a) -> 'Complex' a -> f ('Complex' a)@
 #if MIN_VERSION_base(4,4,0)
-imaginary :: Simple Lens (Complex a) a
+_imagPart :: Simple Lens (Complex a) a
 #else
-imaginary :: RealFloat a => Simple Lens (Complex a) a
+_imagPart :: RealFloat a => Simple Lens (Complex a) a
 #endif
-imaginary f (a :+ b) = (a :+) <$> f b
+_imagPart f (a :+ b) = (a :+) <$> f b
 
--- | This isn't /quite/ a legal lens. Notably the 
+-- | This isn't /quite/ a legal lens. Notably the
 --
 -- @'view' l ('set' l b a) = b@
 --
--- law is violated when you set a 'polar' value with 0 'magnitude' and non-zero 'phase'
--- as the 'phase' information is lost. So don't do that!
+-- law is violated when you set a 'polar' value with 0 'magnitude' and non-zero
+-- 'phase' as the 'phase' information is lost, or with a negative 'magnitude'
+-- which flips the 'phase' and retains a positive 'magnitude'. So don't do
+-- that!
 --
 -- Otherwise, this is a perfectly cromulent 'Lens'.
-polarize :: (RealFloat a, RealFloat b) => Iso (Complex a) (Complex b) (a,a) (b,b)
-polarize = isos polar (uncurry mkPolar)
-                polar (uncurry mkPolar)
+_polar :: RealFloat a => Simple Iso (Complex a) (a,a)
+_polar = iso polar (uncurry mkPolar)
 
--- | Traverse both the real and imaginary parts of a 'Complex' number.
+-- | Access the 'magnitude' of a 'Complex' number
 --
--- > traverseComplex :: Applicative f => (a -> f b) -> Complex a -> f (Complex b)
+-- >>> (10.0 :+ 20.0) & _magnitude *~ 2
+-- 20.0 :+ 40.0
+--
+-- This isn't /quite/ a legal lens. Notably the
+--
+-- @'view' l ('set' l b a) = b@
+--
+-- law is violated when you set a negative 'magnitude'. This flips the 'phase'
+-- and retains a positive 'magnitude'. So don't do that!
+--
+-- Otherwise, this is a perfectly cromulent 'Lens'.
+--
+-- Setting the 'magnitude' of a zero 'Complex' number assumes the 'phase' is 0.
+_magnitude :: RealFloat a => Simple Lens (Complex a) a
+_magnitude f c = setMag <$> f r
+  where setMag r' | r /= 0    = c * (r' / r :+ 0)
+                  | otherwise = r' :+ 0
+        r = magnitude c
+
+-- | Access the 'phase' of a 'Complex' number
+--
+-- >>> (mkPolar 10 (2-pi) & _phase +~ pi & view _phase) ≈ 2
+-- True
+--
+-- This isn't /quite/ a legal lens. Notably the
+--
+-- @'view' l ('set' l b a) = b@
+--
+-- law is violated when you set a 'phase' outside the range @(-'pi', 'pi']@.
+-- The phase is always in that range when queried. So don't do that!
+--
+-- Otherwise, this is a perfectly cromulent 'Lens'.
+_phase :: RealFloat a => Simple Lens (Complex a) a
+_phase f c = setPhase <$> f theta
+  where setPhase theta' = c * cis (theta' - theta)
+        theta = phase c
+
+-- | Access the 'conjugate' of a 'Complex' number
+--
+-- >>> (2.0 :+ 3.0) & _conjugate . _imagPart -~ 1
+-- 2.0 :+ 4.0
+--
+-- >>> (mkPolar 10.0 2.0 ^. _conjugate . _phase) ≈ (-2.0)
+-- True
+_conjugate :: RealFloat a => Simple Iso (Complex a) (Complex a)
+_conjugate = iso conjugate conjugate
+
+-- | Traverse both the 'realPart' and the 'imagPart' of a 'Complex' number.
+--
+-- >>> 0 & complex .~ 1
+-- 1 :+ 1
+--
+-- >>> 3 :+ 4 & complex *~ 2
+-- 6 :+ 8
+--
+-- >>> sumOf complex (1 :+ 2)
+-- 3
+--
+-- @'complex' :: 'Applicative' f => (a -> f b) -> 'Complex' a -> f ('Complex' b)@
 #if MIN_VERSION_base(4,4,0)
-traverseComplex :: Traversal (Complex a) (Complex b) a b
+complex :: Traversal (Complex a) (Complex b) a b
 #else
-traverseComplex :: (RealFloat a, RealFloat b) => Traversal (Complex a) (Complex b) a b
+complex :: (RealFloat a, RealFloat b) => Traversal (Complex a) (Complex b) a b
 #endif
-traverseComplex f (a :+ b) = (:+) <$> f a <*> f b
+complex f (a :+ b) = (:+) <$> f a <*> f b

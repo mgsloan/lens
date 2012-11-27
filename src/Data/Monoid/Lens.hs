@@ -9,14 +9,17 @@
 --
 ----------------------------------------------------------------------------
 module Data.Monoid.Lens
-  ( (<>~), (<<>~)
+  (
+  -- * Monoid Lens Operators
+    (<>~), (<<>~)
   , (<>=), (<<>=)
+  -- * Isomorphisms for Monoidal Wrappers
   , _dual, _endo, _all, _any, _sum, _product, _first, _last
   ) where
 
 import Data.Monoid
 import Control.Lens
-import Control.Monad.State.Class as State
+import Control.Monad.State as State
 
 -- $setup
 -- >>> :m + Control.Lens Data.Monoid.Lens Data.Foldable
@@ -40,6 +43,9 @@ l <>~ n = over l (`mappend` n)
 {-# INLINE (<>~) #-}
 
 -- | Modify the target(s) of a 'Simple' 'Lens', 'Iso', 'Setter' or 'Traversal' by 'mappend'ing a value.
+--
+-- >>> execState (both <>= "!!!") ("hello","world")
+-- ("hello!!!","world!!!")
 --
 -- @
 -- ('<>=') :: ('MonadState' s m, 'Monoid' a) => 'Simple' 'Setter' s a -> a -> m ()

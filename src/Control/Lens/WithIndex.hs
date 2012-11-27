@@ -8,6 +8,10 @@
 {-# LANGUAGE DefaultSignatures #-}
 #define MPTC_DEFAULTS
 #endif
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 704
+{-# LANGUAGE Trustworthy #-} -- vector, hashable
+#endif
+
 
 #ifndef MIN_VERSION_containers
 #define MIN_VERSION_containers(x,y,z) 1
@@ -103,6 +107,7 @@ class Functor f => FunctorWithIndex i f | f -> i where
 #ifdef MPTC_DEFAULTS
   default imap :: TraversableWithIndex i f => (i -> a -> b) -> f a -> f b
   imap = imapOf itraversed
+  {-# INLINE imap #-}
 #endif
 
 -- | The 'IndexedSetter' for a 'FunctorWithIndex'.
@@ -143,9 +148,9 @@ class Foldable f => FoldableWithIndex i f | f -> i where
   -- |
   -- Left-associative fold of an indexed container with access to the index @i@.
   --
-  -- When you don't need access to the index then 'foldl' is more flexible in what it accepts.
+  -- When you don't need access to the index then 'Data.Foldable.foldl' is more flexible in what it accepts.
   --
-  -- @'foldl' ≡ 'ifoldl' '.' 'const'@
+  -- @'Data.Foldable.foldl' ≡ 'ifoldl' '.' 'const'@
   ifoldl :: (i -> b -> a -> b) -> b -> f a -> b
   ifoldl f z t = appEndo (getDual (ifoldMap (\i -> dual# (endo# (flip (f i)))) t)) z
 
@@ -163,13 +168,6 @@ class Foldable f => FoldableWithIndex i f | f -> i where
   -- When you don't need access to the index then 'Control.Lens.Fold.foldlOf'' is more flexible in what it accepts.
   --
   -- @'Control.Lens.Fold.foldlOf'' l ≡ 'ifoldlOf'' l '.' 'const'@
-  --
-  -- @
-  -- 'ifoldlOf'' :: 'Control.Lens.IndexedGetter.IndexedGetter' i a c            -> (i -> e -> c -> e) -> e -> a -> e
-  -- 'ifoldlOf'' :: 'IndexedFold' i a c              -> (i -> e -> c -> e) -> e -> a -> e
-  -- 'ifoldlOf'' :: 'Control.Lens.IndexedLens.SimpleIndexedLens' i a c        -> (i -> e -> c -> e) -> e -> a -> e
-  -- 'ifoldlOf'' :: 'Control.Lens.IndexedTraversal.SimpleIndexedTraversal' i a c   -> (i -> e -> c -> e) -> e -> a -> e
-  -- @
   ifoldl' :: (i -> b -> a -> b) -> b -> f a -> b
   ifoldl' f z0 xs = ifoldr f' id xs z0
     where f' i x k z = k $! f i z x
@@ -182,8 +180,8 @@ ifolded = index $ \ f -> coerce . getFolding . ifoldMap (\i -> folding# (f i))
 -- | Obtain a 'Fold' by lifting an operation that returns a foldable result.
 --
 -- This can be useful to lift operations from @Data.List@ and elsewhere into a 'Fold'.
-ifolding :: FoldableWithIndex i f => (a -> f c) -> IndexedFold i a c
-ifolding afc = index $ \ icgd -> coerce . itraverse_ icgd . afc
+ifolding :: FoldableWithIndex i f => (s -> f a) -> IndexedFold i s a
+ifolding sfa = index $ \ iagb -> coerce . itraverse_ iagb . sfa
 {-# INLINE ifolding #-}
 
 -- |
@@ -191,7 +189,7 @@ ifolding afc = index $ \ icgd -> coerce . itraverse_ icgd . afc
 --
 -- When you don't need access to the index then 'any' is more flexible in what it accepts.
 --
--- @'any' = 'iany' '.' 'const'@
+-- @'any' ≡ 'iany' '.' 'const'@
 iany :: FoldableWithIndex i f => (i -> a -> Bool) -> f a -> Bool
 iany f = getAny# (ifoldMap (\i -> any# (f i)))
 {-# INLINE iany #-}
@@ -300,9 +298,9 @@ ifoldlM f z0 xs = ifoldr f' return xs z0
 
 -- | Extract the key-value pairs from a structure.
 --
--- When you don't need access to the indices in the result, then 'toList' is more flexible in what it accepts.
+-- When you don't need access to the indices in the result, then 'Data.Foldable.toList' is more flexible in what it accepts.
 --
--- @'toList' ≡ 'map' 'fst' '.' 'itoList'@
+-- @'Data.Foldable.toList' ≡ 'Data.List.map' 'fst' '.' 'itoList'@
 itoList :: FoldableWithIndex i f => f a -> [(i,a)]
 itoList = ifoldr (\i c -> ((i,c):)) []
 {-# INLINE itoList #-}
@@ -403,7 +401,7 @@ imapAccumL f s0 a = swap (Lazy.runState (forwards (itraverse (\i c -> Backwards 
 --
 -- >>> over (iwhere (>0)) Prelude.reverse $ ["He","was","stressed","o_O"]
 -- ["He","saw","desserts","O_o"]
-iwhere :: (TraversableWithIndex i t) => (i -> Bool) -> SimpleIndexedTraversal i (t a) a
+iwhere :: TraversableWithIndex i t => (i -> Bool) -> SimpleIndexedTraversal i (t a) a
 iwhere p = index $ \f a -> itraverse (\i c -> if p i then f i c else pure c) a
 {-# INLINE iwhere #-}
 
@@ -414,34 +412,45 @@ iwhere p = index $ \f a -> itraverse (\i c -> if p i then f i c else pure c) a
 -- | The position in the list is available as the index.
 instance FunctorWithIndex Int [] where
   imap = imapOf itraversed
+  {-# INLINE imap #-}
 instance FoldableWithIndex Int [] where
   ifoldMap = ifoldMapOf itraversed
+  {-# INLINE ifoldMap #-}
 instance TraversableWithIndex Int [] where
   itraverse = withIndex (indexed traverse)
+  {-# INLINE itraverse #-}
 
 -- | The position in the sequence is available as the index.
 instance FunctorWithIndex Int Seq where
   imap = imapOf itraversed
+  {-# INLINE imap #-}
 instance FoldableWithIndex Int Seq where
   ifoldMap = ifoldMapOf itraversed
+  {-# INLINE ifoldMap #-}
 instance TraversableWithIndex Int Seq where
   itraverse = withIndex (indexed traverse)
+  {-# INLINE itraverse #-}
 
 instance FunctorWithIndex Int Vector where
   imap = V.imap
+  {-# INLINE imap #-}
 instance FoldableWithIndex Int Vector where
   ifoldMap = ifoldMapOf itraversed
+  {-# INLINE ifoldMap #-}
   ifoldr = V.ifoldr
   ifoldl = V.ifoldl . flip
   ifoldr' = V.ifoldr'
   ifoldl' = V.ifoldl' . flip
 instance TraversableWithIndex Int Vector where
   itraverse f = sequenceA . V.imap f
+  {-# INLINE itraverse #-}
 
 instance FunctorWithIndex Int IntMap where
   imap = imapOf itraversed
+  {-# INLINE imap #-}
 instance FoldableWithIndex Int IntMap where
   ifoldMap = ifoldMapOf itraversed
+  {-# INLINE ifoldMap #-}
 instance TraversableWithIndex Int IntMap where
 #if MIN_VERSION_containers(0,5,0)
   itraverse = IntMap.traverseWithKey
@@ -452,8 +461,10 @@ instance TraversableWithIndex Int IntMap where
 
 instance Ord k => FunctorWithIndex k (Map k) where
   imap = imapOf itraversed
+  {-# INLINE imap #-}
 instance Ord k => FoldableWithIndex k (Map k) where
   ifoldMap = ifoldMapOf itraversed
+  {-# INLINE ifoldMap #-}
 instance Ord k => TraversableWithIndex k (Map k) where
 #if MIN_VERSION_containers(0,5,0)
   itraverse = Map.traverseWithKey
@@ -464,8 +475,10 @@ instance Ord k => TraversableWithIndex k (Map k) where
 
 instance (Eq k, Hashable k) => FunctorWithIndex k (HashMap k) where
   imap = imapOf itraversed
+  {-# INLINE imap #-}
 instance (Eq k, Hashable k) => FoldableWithIndex k (HashMap k) where
   ifoldMap = ifoldMapOf itraversed
+  {-# INLINE ifoldMap #-}
 instance (Eq k, Hashable k) => TraversableWithIndex k (HashMap k) where
   itraverse = HashMap.traverseWithKey
   {-# INLINE itraverse #-}

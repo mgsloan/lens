@@ -1,11 +1,35 @@
+3.7
+-----
+* Added `_magnitude`, `_phase` and `_conjugate` to `Data.Complex.Lens`. Renamed other lenses for consistency: `_realPart`, `_imagPart`, `_polar`.
+* Promoted `_left` and `_right` to projections and moved them to `Control.Lens.Projection`.
+* Implemented a complete redesign of the way `Projection` is handled internally, that necessitated some changes to `Iso` internally as well.
+* Generalized `view` and `views` to subsume the functionality of `peruse` and `peruses`.
+* Removed `peruse`, `peruses`.
+* Generalized `review` and `reviews` to both return a `MonadReader` and to work on a `Projection`.
+* Added `reuse` : `use` :: `review` : `view` and `reuses` : `uses` :: `reviews` : `views` for working a `Projection` from the current `MonadState`.
+
 3.6
 -----
-* Added `field` to `Control.Lens.Type`, which can be used to generate a Lens from a field accessor by abusing `Data.Data` without quasiquotation.
-* Added some missing examples/ files to the distribution.
+* Added `upon` (along with variants of it) to `Data.Data.Lens`, which can be used to generate a `Traversal` from a field accessor or any function that returns, unmodified,
+  a single field that would be visited by `template`.
+* Added some missing `examples/` files to the distribution.
 * Renamed `Data.Bits.Lens.traverseBits` to `bits`.
 * Removed `(^!?)`, which was an alias for `(^?!)`.
 * Removed the need for `Trustworthy` by changing the implementation of `coerce` for `BazaarT`.
 * Moved BazaarT to `Control.Lens.Internal`.
+* Added `(<&>)` to `Control.Lens.Combinators`.
+* `element` and `elementOf` are now indexed traversals rather than lenses and have moved to `Control.Lens.IndexedTraversal`. This both fixes their former partiality and lets you use chain indexed combinators with them.
+* Added `elements` and `elementsOf` as indexed traversals for ordinal indexing into regular traversals that generalize `element` and `elementOf`.
+* Renamed `Data.Complex.Lens.traverseComplex` to `complex`.
+* Changed `Data.Complex.Lens.polarize` to a `Simple Iso`, due to the `RealFloat` constraint causing inference problems.
+* Renamed `traverseLeft` and `traverseRight` to `_left` and `_right` respectively.
+* Renamed `traverseSlice`, `traverseFrom`, and `traverseTo` in `Data.Sequence.Lens` to `sliced`, `slicedFrom`, and `slicedTo` respectively.
+* Renamed `traverseAt` to `_at` in `Control.Lens.IndexedTraversal`.
+* Renamed `traverseArray` to `_array` in `Data.Array.Lens`.
+* Renamed and made the combinators in `Control.Lens.Zipper` more compositional to reduce third-party naming conflicts down to just `left` and `right`.
+* Renamed `&=` and `|=` to `.&.=` and `.|.=` for consistency, mutatis mutandis their related operations.
+* Added a `Plated` instances for `Language.Haskell.TH` types.
+* Renamed `atIndex` and `atIndices` in `Data.Vector.Lens` and `Data.Vector.Generic.Lens` to `ordinal` and `ordinals` to match `Data.Sequence.Lens`
 
 3.5.1
 -----
